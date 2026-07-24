@@ -57,10 +57,6 @@ curl -fsSL https://toppk.github.io/omni/install.sh | sh
 
 The script downloads `omni_linux_amd64`, verifies its release checksum, and installs it to `~/.local/bin`. Set `OMNI_INSTALL_DIR` to choose another destination. Read the script before piping it to your shell, or download the binary and checksum directly from [GitHub Releases](https://github.com/toppk/omni/releases/latest).
 
-## Release notes
-
-Each release has a hand-written, versioned note in [release-notes](release-notes/) with features, bug fixes, breaking changes, security, and upgrade guidance. Start future notes from [the template](release-notes/TEMPLATE.md); the release workflow publishes that exact file.
-
 ## Trello commands
 
 After adding a Trello API key and token, commands return JSON suitable for people, shell tools, and agents:
@@ -92,37 +88,9 @@ omni describe observe trello card get --format=json
 
 The service JSON includes stable `operation_id` values, action-first command tokens, effect metadata, summaries, descriptions, response descriptions, credential requirements, safety status, and whether the operation is implemented or planned. This is intentionally shaped like MCP tool enumeration while remaining a local CLI contract.
 
-## Development workflow
+## Developing
 
-Omni uses only the standard Go toolchain for its initial quality gate—no linter dependency or framework is required.
-
-```bash
-# Format source files in place.
-gofmt -w cmd internal
-
-# Compile and run all unit tests.
-go test ./...
-
-# Run Go's standard static checks.
-go vet ./...
-
-# Compile a release binary.
-go build -o ./bin/omni ./cmd/omni
-```
-
-Run the full pre-commit gate with:
-
-```bash
-./scripts/check
-```
-
-To use that gate automatically before every local commit, opt in once per clone:
-
-```bash
-git config core.hooksPath .githooks
-```
-
-The hook checks formatting without changing files, then runs `go vet` and `go test`. A writable Go build cache is required; if a sandboxed environment makes the default cache read-only, use `GOCACHE=/tmp/omni-go-cache` for the command.
+Contributor workflow, testing, release process, GitHub Pages, installer maintenance, and SDLC policies are in [DEVELOPING.md](DEVELOPING.md).
 
 ## Policies
 
