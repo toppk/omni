@@ -63,3 +63,15 @@ func TestConfigureTrelloStoresSettingsAndSecrets(t *testing.T) {
 		t.Fatal("secret appeared in output")
 	}
 }
+
+func TestVersionAliases(t *testing.T) {
+	for _, args := range [][]string{{"version"}, {"--version"}, {"-V"}} {
+		var out bytes.Buffer
+		if err := Run(context.Background(), args, &out, &bytes.Buffer{}); err != nil {
+			t.Fatal(err)
+		}
+		if got, want := out.String(), "omni "+Version+"\n"; got != want {
+			t.Fatalf("%v: got %q, want %q", args, got, want)
+		}
+	}
+}

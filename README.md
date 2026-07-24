@@ -19,6 +19,8 @@ go run ./cmd/omni configure init
 go run ./cmd/omni describe --format=json
 ```
 
+Check the installed release version with `omni version`, `omni --version`, or `omni -V`. Local builds report `dev`; release builds receive their version from the Git tag during compilation.
+
 `configure init` creates the only two configuration files used by the initial skeleton:
 
 ```text

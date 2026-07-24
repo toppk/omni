@@ -44,7 +44,7 @@ jobs:
           version="${tag#v}"
           asset="omni_linux_amd64"
           mkdir -p dist
-          go build -trimpath -ldflags='-s -w' -o dist/"$asset" ./cmd/omni
+          go build -trimpath -ldflags="-s -w -X github.com/toppk/omni/internal/app.Version=$tag" -o dist/"$asset" ./cmd/omni
           (
             cd dist
             sha256sum "$asset" > "$asset".sha256

@@ -14,6 +14,10 @@ import (
 	"github.com/toppk/omni/internal/trello"
 )
 
+// Version is set by the release workflow with Go linker flags. Local builds
+// intentionally retain the development value rather than a checked-in version.
+var Version = "dev"
+
 const usage = `Omni is a safety-oriented CLI for service APIs.
 
 Usage:
@@ -22,6 +26,7 @@ Usage:
   omni configure describe
   omni configure set SECTION.KEY VALUE
   omni configure secret set SECTION.KEY VALUE
+  omni version
   omni describe [<effect> <service> <resource> <verb>] [--format json]
   omni policy explain <effect> <service> <resource> <verb>
   omni [--policy MODE] <effect> <service> <resource> <verb>
@@ -55,6 +60,10 @@ For service-specific options, run "omni configure SERVICE --help".
 `
 
 func Run(_ context.Context, args []string, out, errOut io.Writer) error {
+	if len(args) == 1 && (args[0] == "version" || args[0] == "--version" || args[0] == "-V") {
+		_, err := fmt.Fprintf(out, "omni %s\n", Version)
+		return err
+	}
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		_, err := fmt.Fprint(out, usage)
 		return err
