@@ -9,6 +9,12 @@ This document is the operating guide for contributors and release maintainers. T
 - Command schemas are security contracts. An operation's effect must be determined by its left-hand command path, never by a later flag.
 - Credentials belong only in `~/.config/omni/credentials/credentials.toml`; never add credentials, `.env` files, or real configuration to the repository.
 
+## Contributing
+
+All contributions are welcome. Contributions are evaluated on their own technical and product merits, regardless of the contributor's identity, affiliation, background, or prior relationship with the project.
+
+Before opening a change, run the daily quality gate and include tests and documentation appropriate to its scope. For a larger command-surface or provider design, open an issue or start a discussion first so the command grammar and safety metadata can be reviewed early.
+
 ## Local requirements
 
 - Go 1.26 or newer.

@@ -1,5 +1,10 @@
 # Omni
 
+[![Latest release](https://img.shields.io/github/v/release/toppk/omni?display_name=tag&sort=semver)](https://github.com/toppk/omni/releases/latest)
+[![Release build](https://github.com/toppk/omni/actions/workflows/release.yml/badge.svg)](https://github.com/toppk/omni/actions/workflows/release.yml)
+[![Go version](https://img.shields.io/github/go-mod/go-version/toppk/omni)](go.mod)
+[![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD--3--Clause-42e8ff.svg)](LICENSE)
+
 Omni is a dependency-light Go CLI that exposes service APIs through command paths whose safety class is visible at the left edge of the command.
 
 ```text
