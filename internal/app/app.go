@@ -392,7 +392,7 @@ func describeService(service string, jsonFormat bool, out io.Writer) error {
 		}
 	}
 	if service == "trello" {
-		_, err := fmt.Fprint(out, "CONFIGURATION\n       Get Trello credentials and configuration guidance:\n\n               omni setup trello\n\n       Configure settings and credentials in one command:\n\n               omni configure trello [--default-board BOARD_ID] [--api-key API_KEY]\n                       [--api-token API_TOKEN] [--api-url URL]\n\n       The API key and token are stored as local secrets; the default board and\n       API URL are ordinary local settings.\n\nSEE ALSO\n       omni(1), omni describe --format=json\n")
+		_, err := fmt.Fprint(out, "CONFIGURATION\n       Get Trello credentials and configuration guidance:\n\n               omni setup trello\n\n       Configure settings and credentials in one command:\n\n               omni configure trello [--default-board BOARD_ID] [--api-key API_KEY]\n                       [--api-token API_TOKEN] [--api-url URL]\n\n       The API key and token are stored as local secrets; the default board and\n       API URL are ordinary local settings.\n")
 		return err
 	}
 	return nil
