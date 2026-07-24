@@ -31,6 +31,19 @@ const (
 	Many Cardinality = "many"
 )
 
+type Argument struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Optional    bool   `json:"optional"`
+}
+
+type Option struct {
+	Name        string `json:"name"`
+	Value       string `json:"value"`
+	Description string `json:"description"`
+	Optional    bool   `json:"optional"`
+}
+
 // Definition is the source of truth for help, discovery, and policy checks.
 // Path excludes the effect because Effect is always the first command token.
 type Definition struct {
@@ -39,11 +52,12 @@ type Definition struct {
 	Summary      string      `json:"summary"`
 	Description  string      `json:"description"`
 	Response     string      `json:"response_description"`
+	Arguments    []Argument  `json:"arguments"`
+	Options      []Option    `json:"options"`
 	Cardinality  Cardinality `json:"cardinality"`
 	Reversible   bool        `json:"reversible"`
 	Credentials  string      `json:"credentials"`
 	UnattendedOK bool        `json:"unattended_ok"`
-	Status       string      `json:"status"`
 }
 
 func (d Definition) Tokens() []string    { return append([]string{string(d.Effect)}, d.Path...) }
@@ -62,9 +76,6 @@ func (d Definition) Validate() error {
 	}
 	if d.Description == "" || d.Response == "" {
 		return fmt.Errorf("command %q needs descriptions", d.Name())
-	}
-	if d.Status != "implemented" && d.Status != "planned" {
-		return fmt.Errorf("command %q has invalid status %q", d.Name(), d.Status)
 	}
 	return nil
 }

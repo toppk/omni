@@ -3,9 +3,9 @@
 Omni is a dependency-light Go CLI that exposes service APIs through command paths whose safety class is visible at the left edge of the command.
 
 ```text
-omni observe tailscale device list
 omni observe trello board list
-omni authorize tailscale device authorize DEVICE_ID
+omni observe trello card get CARD_ID
+omni create trello card create LIST_ID --name "Plan release"
 omni delete trello card delete CARD_ID
 ```
 
@@ -45,7 +45,7 @@ The Trello command stores ordinary settings in `settings.toml` and secrets only 
 
 For example, `trello.api-url` is an optional setting that defaults to `https://api.trello.com/1`. Point it at a compatible mock server with `omni configure trello --api-url URL`; this override applies to the native Trello client without changing code.
 
-See [credential setup](docs/credentials.md) before adding API credentials. Tailscale is currently a registered command surface; Trello's core board/list/card operations are live native API calls.
+See [credential setup](docs/credentials.md) before adding API credentials. Trello's core board/list/card operations are live native API calls; Tailscale is the next planned integration.
 
 ## Install
 
@@ -86,7 +86,7 @@ omni describe trello --format=json
 omni describe observe trello card get --format=json
 ```
 
-The service JSON includes stable `operation_id` values, action-first command tokens, effect metadata, summaries, descriptions, response descriptions, credential requirements, safety status, and whether the operation is implemented or planned. This is intentionally shaped like MCP tool enumeration while remaining a local CLI contract.
+The service JSON includes stable `operation_id` values, action-first command tokens, effect metadata, summaries, descriptions, response descriptions, arguments, options, and credential requirements. This is intentionally shaped like MCP tool enumeration while remaining a local CLI contract; the default terminal view is a human-oriented service manual.
 
 ## Developing
 

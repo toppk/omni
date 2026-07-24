@@ -98,7 +98,6 @@ func TestDescribeTrelloJSONIncludesOperationMetadata(t *testing.T) {
 			OperationID string `json:"operation_id"`
 			Description string `json:"description"`
 			Response    string `json:"response_description"`
-			Status      string `json:"status"`
 		} `json:"operations"`
 	}
 	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
@@ -108,7 +107,23 @@ func TestDescribeTrelloJSONIncludesOperationMetadata(t *testing.T) {
 		t.Fatalf("unexpected catalog: %#v", result)
 	}
 	first := result.Operations[0]
-	if first.OperationID != "omni.observe.trello.board.list" || first.Description == "" || first.Response == "" || first.Status != "implemented" {
+	if first.OperationID != "omni.observe.trello.board.list" || first.Description == "" || first.Response == "" {
 		t.Fatalf("incomplete operation metadata: %#v", first)
+	}
+}
+
+func TestDescribeTrelloUsesServiceManualLayout(t *testing.T) {
+	var out bytes.Buffer
+	if err := Run(context.Background(), []string{"describe", "trello"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	text := out.String()
+	for _, heading := range []string{"TRELLO(1)", "NAME", "SYNOPSIS", "DESCRIPTION", "COMMANDS", "CONFIGURATION"} {
+		if !strings.Contains(text, heading) {
+			t.Fatalf("missing %s from manual: %s", heading, text)
+		}
+	}
+	if strings.Contains(text, "operation_id") || strings.Contains(text, "implemented") {
+		t.Fatalf("internal schema leaked into human manual: %s", text)
 	}
 }

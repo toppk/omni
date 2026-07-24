@@ -306,8 +306,7 @@ func describe(args []string, out io.Writer) error {
 		if jsonFormat {
 			return json.NewEncoder(out).Encode(operationInfoFor(d))
 		}
-		_, err = fmt.Fprintf(out, "%s\n  operation_id: %s\n  effect: %s\n  status: %s\n  summary: %s\n  description: %s\n  response: %s\n", d.Name(), d.OperationID(), d.Effect, d.Status, d.Summary, d.Description, d.Response)
-		return err
+		return describeOperation(d, out)
 	}
 	return fmt.Errorf("unknown service or command %q", strings.Join(filtered, " "))
 }
@@ -323,11 +322,20 @@ type operationInfo struct {
 	Reversible          bool                `json:"reversible"`
 	Credentials         string              `json:"credentials"`
 	UnattendedOK        bool                `json:"unattended_ok"`
-	Status              string              `json:"status"`
+	Arguments           []command.Argument  `json:"arguments"`
+	Options             []command.Option    `json:"options"`
 }
 
 func operationInfoFor(d command.Definition) operationInfo {
-	return operationInfo{d.OperationID(), d.Tokens(), d.Effect, d.Summary, d.Description, d.Response, d.Cardinality, d.Reversible, d.Credentials, d.UnattendedOK, d.Status}
+	arguments := d.Arguments
+	if arguments == nil {
+		arguments = []command.Argument{}
+	}
+	options := d.Options
+	if options == nil {
+		options = []command.Option{}
+	}
+	return operationInfo{d.OperationID(), d.Tokens(), d.Effect, d.Summary, d.Description, d.Response, d.Cardinality, d.Reversible, d.Credentials, d.UnattendedOK, arguments, options}
 }
 
 type serviceDescription struct {
@@ -366,15 +374,120 @@ func describeService(service string, jsonFormat bool, out io.Writer) error {
 	if jsonFormat {
 		return json.NewEncoder(out).Encode(detail)
 	}
-	if _, err := fmt.Fprintf(out, "%s capabilities (%d operations)\n\n", strings.ToUpper(service), len(operations)); err != nil {
+	upper := strings.ToUpper(service)
+	if _, err := fmt.Fprintf(out, "%s(1)                         Omni Manual                        %s(1)\n\nNAME\n       omni-%s - %s\n\nSYNOPSIS\n", upper, upper, service, serviceSummary(service)); err != nil {
 		return err
 	}
 	for _, d := range operations {
-		if _, err := fmt.Fprintf(out, "[%s | %s] %s\n  %s\n  response: %s\n  operation_id: %s\n\n", d.Effect, d.Status, d.Name(), d.Summary, d.Response, d.OperationID()); err != nil {
+		if _, err := fmt.Fprintf(out, "       omni %s\n", synopsis(d)); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintf(out, "\nDESCRIPTION\n       %s Omni command paths are action-first: the first token after\n       omni identifies the operation effect, and arguments or options never\n       change that effect.\n\nCOMMANDS\n", serviceSummary(service)); err != nil {
+		return err
+	}
+	for _, d := range operations {
+		if err := writeCommandDetails(d, out); err != nil {
+			return err
+		}
+	}
+	if service == "trello" {
+		_, err := fmt.Fprint(out, "CONFIGURATION\n       Get Trello credentials and configuration guidance:\n\n               omni setup trello\n\n       Configure settings and credentials in one command:\n\n               omni configure trello [--default-board BOARD_ID] [--api-key API_KEY]\n                       [--api-token API_TOKEN] [--api-url URL]\n\n       The API key and token are stored as local secrets; the default board and\n       API URL are ordinary local settings.\n\nSEE ALSO\n       omni(1), omni describe --format=json\n")
+		return err
+	}
+	return nil
+}
+
+func describeOperation(d command.Definition, out io.Writer) error {
+	title := strings.ToUpper(strings.Join(d.Tokens(), "-"))
+	if _, err := fmt.Fprintf(out, "%s(1)                         Omni Manual                        %s(1)\n\nNAME\n       omni-%s - %s\n\nSYNOPSIS\n       omni %s\n\nDESCRIPTION\n       %s\n\n", title, title, strings.Join(d.Tokens(), "-"), d.Summary, synopsis(d), d.Description); err != nil {
+		return err
+	}
+	if err := writeArgumentsOptions(d, out); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintf(out, "RETURNS\n       %s\n", d.Response)
+	return err
+}
+
+func writeCommandDetails(d command.Definition, out io.Writer) error {
+	if _, err := fmt.Fprintf(out, "       omni %s\n           %s\n", synopsis(d), d.Summary); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(out, "           %s\n", d.Description); err != nil {
+		return err
+	}
+	if len(d.Arguments) > 0 {
+		if _, err := fmt.Fprintln(out, "           Arguments:"); err != nil {
+			return err
+		}
+		for _, arg := range d.Arguments {
+			if _, err := fmt.Fprintf(out, "               %s\n                   %s\n", arg.Name, arg.Description); err != nil {
+				return err
+			}
+		}
+	}
+	if len(d.Options) > 0 {
+		if _, err := fmt.Fprintln(out, "           Options:"); err != nil {
+			return err
+		}
+		for _, option := range d.Options {
+			if _, err := fmt.Fprintf(out, "               %s %s\n                   %s\n", option.Name, option.Value, option.Description); err != nil {
+				return err
+			}
+		}
+	}
+	_, err := fmt.Fprintf(out, "           Returns: %s\n\n", d.Response)
+	return err
+}
+
+func writeArgumentsOptions(d command.Definition, out io.Writer) error {
+	if len(d.Arguments) > 0 {
+		if _, err := fmt.Fprintln(out, "ARGUMENTS"); err != nil {
+			return err
+		}
+		for _, arg := range d.Arguments {
+			if _, err := fmt.Fprintf(out, "       %s\n           %s\n", arg.Name, arg.Description); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprintln(out); err != nil {
+			return err
+		}
+	}
+	if len(d.Options) > 0 {
+		if _, err := fmt.Fprintln(out, "OPTIONS"); err != nil {
+			return err
+		}
+		for _, option := range d.Options {
+			if _, err := fmt.Fprintf(out, "       %s %s\n           %s\n", option.Name, option.Value, option.Description); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprintln(out); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func synopsis(d command.Definition) string {
+	parts := append([]string{}, d.Tokens()...)
+	for _, arg := range d.Arguments {
+		if arg.Optional {
+			parts = append(parts, "["+arg.Name+"]")
+		} else {
+			parts = append(parts, arg.Name)
+		}
+	}
+	for _, option := range d.Options {
+		value := option.Name + " " + option.Value
+		if option.Optional {
+			value = "[" + value + "]"
+		}
+		parts = append(parts, value)
+	}
+	return strings.Join(parts, " ")
 }
 
 func serviceNames() []string {
@@ -407,7 +520,7 @@ func serviceOperations(service string) []command.Definition {
 }
 func serviceSummary(service string) string {
 	if service == "trello" {
-		return "Trello board, list, and card operations."
+		return "List and change Trello boards, lists, and cards."
 	}
 	if service == "tailscale" {
 		return "Tailnet administration operations."
