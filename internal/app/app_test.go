@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -73,5 +74,41 @@ func TestVersionAliases(t *testing.T) {
 		if got, want := out.String(), "omni "+Version+"\n"; got != want {
 			t.Fatalf("%v: got %q, want %q", args, got, want)
 		}
+	}
+}
+
+func TestDescribeOverviewListsServiceDiscovery(t *testing.T) {
+	var out bytes.Buffer
+	if err := Run(context.Background(), []string{"describe"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "omni describe trello") {
+		t.Fatalf("missing Trello discovery: %s", out.String())
+	}
+}
+
+func TestDescribeTrelloJSONIncludesOperationMetadata(t *testing.T) {
+	var out bytes.Buffer
+	if err := Run(context.Background(), []string{"describe", "trello", "--format=json"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Service    string `json:"service"`
+		Operations []struct {
+			OperationID string `json:"operation_id"`
+			Description string `json:"description"`
+			Response    string `json:"response_description"`
+			Status      string `json:"status"`
+		} `json:"operations"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Service != "trello" || len(result.Operations) == 0 {
+		t.Fatalf("unexpected catalog: %#v", result)
+	}
+	first := result.Operations[0]
+	if first.OperationID != "omni.observe.trello.board.list" || first.Description == "" || first.Response == "" || first.Status != "implemented" {
+		t.Fatalf("incomplete operation metadata: %#v", first)
 	}
 }

@@ -292,31 +292,127 @@ func describe(args []string, out io.Writer) error {
 			filtered = append(filtered, a)
 		}
 	}
-	if jsonFormat {
-		var value any = command.Registry
-		if len(filtered) > 0 {
-			d, err := command.Find(filtered)
-			if err != nil {
-				return err
-			}
-			value = d
-		}
-		return json.NewEncoder(out).Encode(value)
+	if len(filtered) == 0 {
+		return describeOverview(jsonFormat, out)
+	}
+	if len(filtered) == 1 && hasService(filtered[0]) {
+		return describeService(filtered[0], jsonFormat, out)
 	}
 	if len(filtered) > 0 {
 		d, err := command.Find(filtered)
 		if err != nil {
 			return err
 		}
-		_, err = fmt.Fprintf(out, "%s\n  effect: %s\n  %s\n", d.Name(), d.Effect, d.Summary)
+		if jsonFormat {
+			return json.NewEncoder(out).Encode(operationInfoFor(d))
+		}
+		_, err = fmt.Fprintf(out, "%s\n  operation_id: %s\n  effect: %s\n  status: %s\n  summary: %s\n  description: %s\n  response: %s\n", d.Name(), d.OperationID(), d.Effect, d.Status, d.Summary, d.Description, d.Response)
 		return err
 	}
-	for _, d := range command.Registry {
-		if _, err := fmt.Fprintf(out, "%-43s %s\n", d.Name(), d.Summary); err != nil {
+	return fmt.Errorf("unknown service or command %q", strings.Join(filtered, " "))
+}
+
+type operationInfo struct {
+	OperationID         string              `json:"operation_id"`
+	Command             []string            `json:"command"`
+	Effect              command.Effect      `json:"effect"`
+	Summary             string              `json:"summary"`
+	Description         string              `json:"description"`
+	ResponseDescription string              `json:"response_description"`
+	Cardinality         command.Cardinality `json:"cardinality"`
+	Reversible          bool                `json:"reversible"`
+	Credentials         string              `json:"credentials"`
+	UnattendedOK        bool                `json:"unattended_ok"`
+	Status              string              `json:"status"`
+}
+
+func operationInfoFor(d command.Definition) operationInfo {
+	return operationInfo{d.OperationID(), d.Tokens(), d.Effect, d.Summary, d.Description, d.Response, d.Cardinality, d.Reversible, d.Credentials, d.UnattendedOK, d.Status}
+}
+
+type serviceDescription struct {
+	Service    string          `json:"service"`
+	Summary    string          `json:"summary"`
+	Operations []operationInfo `json:"operations"`
+}
+
+func describeOverview(jsonFormat bool, out io.Writer) error {
+	services := serviceNames()
+	if jsonFormat {
+		items := make([]map[string]any, 0, len(services))
+		for _, service := range services {
+			items = append(items, map[string]any{"service": service, "describe": []string{"describe", service}, "operations": len(serviceOperations(service))})
+		}
+		return json.NewEncoder(out).Encode(map[string]any{"services": items, "discovery": []string{"omni describe SERVICE", "omni describe EFFECT SERVICE RESOURCE VERB"}})
+	}
+	if _, err := fmt.Fprintln(out, "Omni capability discovery\n\nServices:"); err != nil {
+		return err
+	}
+	for _, service := range services {
+		if _, err := fmt.Fprintf(out, "  %-12s %d operations  → omni describe %s\n", service, len(serviceOperations(service)), service); err != nil {
+			return err
+		}
+	}
+	_, err := fmt.Fprintln(out, "\nDiscover a service:  omni describe SERVICE\nInspect one operation: omni describe EFFECT SERVICE RESOURCE VERB\nMachine-readable output: omni describe [SERVICE] --format=json")
+	return err
+}
+
+func describeService(service string, jsonFormat bool, out io.Writer) error {
+	operations := serviceOperations(service)
+	detail := serviceDescription{Service: service, Summary: serviceSummary(service), Operations: make([]operationInfo, 0, len(operations))}
+	for _, d := range operations {
+		detail.Operations = append(detail.Operations, operationInfoFor(d))
+	}
+	if jsonFormat {
+		return json.NewEncoder(out).Encode(detail)
+	}
+	if _, err := fmt.Fprintf(out, "%s capabilities (%d operations)\n\n", strings.ToUpper(service), len(operations)); err != nil {
+		return err
+	}
+	for _, d := range operations {
+		if _, err := fmt.Fprintf(out, "[%s | %s] %s\n  %s\n  response: %s\n  operation_id: %s\n\n", d.Effect, d.Status, d.Name(), d.Summary, d.Response, d.OperationID()); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func serviceNames() []string {
+	seen := map[string]bool{}
+	var names []string
+	for _, d := range command.Registry {
+		if !seen[d.Path[0]] {
+			seen[d.Path[0]] = true
+			names = append(names, d.Path[0])
+		}
+	}
+	return names
+}
+func hasService(service string) bool {
+	for _, name := range serviceNames() {
+		if name == service {
+			return true
+		}
+	}
+	return false
+}
+func serviceOperations(service string) []command.Definition {
+	var operations []command.Definition
+	for _, d := range command.Registry {
+		if d.Path[0] == service {
+			operations = append(operations, d)
+		}
+	}
+	return operations
+}
+func serviceSummary(service string) string {
+	if service == "trello" {
+		return "Trello board, list, and card operations."
+	}
+	if service == "tailscale" {
+		return "Tailnet administration operations."
+	}
+	return ""
 }
 
 func explain(args []string, out io.Writer) error {

@@ -79,6 +79,19 @@ omni delete trello card delete CARD_ID
 
 The first four are `observe` commands. The change operations have their own action-level prefix, so no flag can transform an approved observation into a modification.
 
+## Capability discovery
+
+Omni exposes a service-level operation catalog for both people and agents:
+
+```bash
+omni describe
+omni describe trello
+omni describe trello --format=json
+omni describe observe trello card get --format=json
+```
+
+The service JSON includes stable `operation_id` values, action-first command tokens, effect metadata, summaries, descriptions, response descriptions, credential requirements, safety status, and whether the operation is implemented or planned. This is intentionally shaped like MCP tool enumeration while remaining a local CLI contract.
+
 ## Development workflow
 
 Omni uses only the standard Go toolchain for its initial quality gate—no linter dependency or framework is required.

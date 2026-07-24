@@ -37,14 +37,18 @@ type Definition struct {
 	Effect       Effect      `json:"effect"`
 	Path         []string    `json:"path"`
 	Summary      string      `json:"summary"`
+	Description  string      `json:"description"`
+	Response     string      `json:"response_description"`
 	Cardinality  Cardinality `json:"cardinality"`
 	Reversible   bool        `json:"reversible"`
 	Credentials  string      `json:"credentials"`
 	UnattendedOK bool        `json:"unattended_ok"`
+	Status       string      `json:"status"`
 }
 
-func (d Definition) Tokens() []string { return append([]string{string(d.Effect)}, d.Path...) }
-func (d Definition) Name() string     { return strings.Join(d.Tokens(), " ") }
+func (d Definition) Tokens() []string    { return append([]string{string(d.Effect)}, d.Path...) }
+func (d Definition) Name() string        { return strings.Join(d.Tokens(), " ") }
+func (d Definition) OperationID() string { return "omni." + strings.Join(d.Tokens(), ".") }
 
 func (d Definition) Validate() error {
 	if d.Effect == "" || d.Effect == Unbounded {
@@ -55,6 +59,12 @@ func (d Definition) Validate() error {
 	}
 	if d.Summary == "" {
 		return fmt.Errorf("command %q needs a summary", d.Name())
+	}
+	if d.Description == "" || d.Response == "" {
+		return fmt.Errorf("command %q needs descriptions", d.Name())
+	}
+	if d.Status != "implemented" && d.Status != "planned" {
+		return fmt.Errorf("command %q has invalid status %q", d.Name(), d.Status)
 	}
 	return nil
 }
