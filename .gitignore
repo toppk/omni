@@ -1,0 +1,17 @@
+# Go build and test output
+/bin/
+/dist/
+/omni
+/omni.exe
+*.test
+*.out
+*.prof
+
+# Local secrets and environment overrides
+.env
+.env.*
+settings.toml
+credentials/
+
+# Operating-system metadata
+.DS_Store
