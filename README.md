@@ -106,3 +106,7 @@ Use `OMNI_POLICY=read-only` or `omni --policy read-only …` to reject all non-o
 ## Design
 
 The project brief is in [universal-cli-project.md](universal-cli-project.md).
+
+## License
+
+BSD 3-Clause. See [LICENSE](LICENSE).
