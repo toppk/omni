@@ -26,26 +26,22 @@ go run ./cmd/omni describe --format=json
 ~/.config/omni/credentials/credentials.toml
 ```
 
-Populate configuration using lower-case registry-style keys, rather than editing files manually:
+Populate Trello in one command, rather than editing files manually:
 
 ```bash
-omni configure set trello.default-board-id BOARD_ID
-omni configure secret set trello.api-key API_KEY
-omni configure secret set trello.api-token API_TOKEN
-
-# Convenience form for both Trello secrets.
-omni configure trello auth --api-key API_KEY --api-token API_TOKEN
+omni setup trello
+omni configure trello --default-board BOARD_ID --api-key API_KEY --api-token API_TOKEN
 
 # Inspect every registry key, its type, and whether it has a code default.
 omni configure describe
 omni configure help trello.api-key
 ```
 
-The `set` tree stores ordinary settings in `settings.toml`; `secret set` and `trello auth` store secrets only in `credentials/credentials.toml`. Commands acknowledge keys but never print secret values. Shell arguments can remain in history or be visible to local processes, so use a short-lived shell or clear the relevant history entry after using the convenience form.
+The Trello command stores ordinary settings in `settings.toml` and secrets only in `credentials/credentials.toml`. Commands acknowledge keys but never print secret values. Shell arguments can remain in history or be visible to local processes, so use a short-lived shell or clear the relevant history entry after using the convenience form.
 
-`omni configure help trello.api-key` prints Trello's official API introduction and credential guide: [developer.atlassian.com/cloud/trello/guides/rest-api/api-introduction](https://developer.atlassian.com/cloud/trello/guides/rest-api/api-introduction/).
+`omni configure help trello.api-key` prints Trello's official API introduction and credential guide: [developer.atlassian.com/cloud/trello/guides/rest-api/api-introduction](https://developer.atlassian.com/cloud/trello/guides/rest-api/api-introduction/). Advanced registry setters remain available through `omni configure set` and `omni configure secret set`.
 
-For example, `trello.api-url` is an optional setting that defaults to `https://api.trello.com/1`. Point it at a compatible mock server with `omni configure set trello.api-url URL`; this override applies to the native Trello client without changing code.
+For example, `trello.api-url` is an optional setting that defaults to `https://api.trello.com/1`. Point it at a compatible mock server with `omni configure trello --api-url URL`; this override applies to the native Trello client without changing code.
 
 See [credential setup](docs/credentials.md) before adding API credentials. Tailscale is currently a registered command surface; Trello's core board/list/card operations are live native API calls.
 

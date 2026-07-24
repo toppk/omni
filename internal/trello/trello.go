@@ -46,14 +46,16 @@ func (c *Client) request(method, endpoint string, payload any, result any) error
 	u.RawQuery = q.Encode()
 	req, err := http.NewRequest(method, u.String(), body)
 	if err != nil {
-		return err
+		return fmt.Errorf("prepare Trello request %s %s", method, endpoint)
 	}
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("Trello request %s %s: %w", method, endpoint, err)
+		// net/http errors can include the full request URL. That URL contains
+		// query-string credentials, so never return the underlying error text.
+		return fmt.Errorf("Trello request %s %s failed: network error", method, endpoint)
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))

@@ -2,8 +2,10 @@ package trello
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/toppk/omni/internal/config"
@@ -39,6 +41,21 @@ func TestRequestAddsCredentialsAndJSONPayload(t *testing.T) {
 	}
 	if card["id"] != "card-1" {
 		t.Fatalf("card = %#v", card)
+	}
+}
+
+func TestNetworkErrorDoesNotExposeCredentials(t *testing.T) {
+	c := NewClient(config.TrelloCredentials{APIKey: "private-key", Token: "private-token"})
+	c.baseURL = "https://example.test"
+	c.http = &http.Client{Transport: roundTripper(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("request failed for key=private-key&token=private-token")
+	})}
+	err := c.request(http.MethodGet, "/boards", nil, nil)
+	if err == nil {
+		t.Fatal("expected network error")
+	}
+	if text := err.Error(); strings.Contains(text, "private-key") || strings.Contains(text, "private-token") {
+		t.Fatalf("error exposes credentials: %s", text)
 	}
 }
 

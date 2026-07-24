@@ -17,13 +17,11 @@ import (
 const usage = `Omni is a safety-oriented CLI for service APIs.
 
 Usage:
-  omni configure init
-	  omni configure set trello.default-board-id BOARD_ID
-	  omni configure secret set trello.api-key API_KEY
-  omni configure secret set trello.api-token API_TOKEN
-  omni configure trello auth --api-key API_KEY --api-token API_TOKEN
+  omni setup SERVICE
+  omni configure SERVICE [OPTIONS]
   omni configure describe
-	  omni configure help SECTION.KEY
+  omni configure set SECTION.KEY VALUE
+  omni configure secret set SECTION.KEY VALUE
   omni describe [<effect> <service> <resource> <verb>] [--format json]
   omni policy explain <effect> <service> <resource> <verb>
   omni [--policy MODE] <effect> <service> <resource> <verb>
@@ -32,6 +30,28 @@ The effect is always the first token after "omni": observe, create, update,
 move, archive, delete, execute, transfer, authorize, or administer.
 Arguments and flags may identify resources or format output, but may not change
 an operation's effect. Use "omni describe --format json" for the registry.
+
+Run "omni setup SERVICE" for service-specific credentials and configuration.
+`
+
+const trelloConfigUsage = `Trello configuration
+
+Usage:
+  omni configure trello [--default-board BOARD_ID] [--api-key API_KEY] [--api-token API_TOKEN] [--api-url URL]
+
+All supplied values are stored at once. --default-board and --api-url are
+ordinary settings; --api-key and --api-token are secrets. Secret values are
+never printed by Omni, but command-line values can remain in shell history.
+`
+
+const configureUsage = `Configure Omni
+
+Usage:
+  omni configure SERVICE [OPTIONS]
+  omni configure describe
+  omni configure help SECTION.KEY
+
+For service-specific options, run "omni configure SERVICE --help".
 `
 
 func Run(_ context.Context, args []string, out, errOut io.Writer) error {
@@ -41,6 +61,9 @@ func Run(_ context.Context, args []string, out, errOut io.Writer) error {
 	}
 	if len(args) > 0 && args[0] == "configure" {
 		return configure(args[1:], out)
+	}
+	if len(args) > 0 && args[0] == "setup" {
+		return setup(args[1:], out)
 	}
 	if args[0] == "describe" {
 		return describe(args[1:], out)
@@ -83,6 +106,10 @@ func configure(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if len(args) == 0 || same(args, []string{"--help"}) || same(args, []string{"help"}) {
+		_, err = fmt.Fprint(out, configureUsage)
+		return err
+	}
 	if len(args) == 1 && args[0] == "describe" {
 		for _, entry := range config.Registry {
 			kind := "setting"
@@ -113,12 +140,19 @@ func configure(args []string, out io.Writer) error {
 		_, err = fmt.Fprintf(out, "%s\n", entry.SetupURL)
 		return err
 	}
+	if same(args, []string{"trello", "--help"}) || same(args, []string{"trello", "help"}) {
+		_, err = fmt.Fprint(out, trelloConfigUsage)
+		return err
+	}
 	if err := config.Initialize(p); err != nil {
 		return fmt.Errorf("initialize configuration: %w", err)
 	}
 	if same(args, []string{"init"}) {
 		_, err = fmt.Fprintf(out, "Initialized:\n  %s\n  %s\n\nSee docs/credentials.md for service setup.\n", p.Settings, p.Credentials)
 		return err
+	}
+	if len(args) > 0 && args[0] == "trello" {
+		return configureTrello(p, args[1:], out)
 	}
 	if len(args) == 3 && args[0] == "set" {
 		entry, ok := config.Lookup(args[1])
@@ -164,7 +198,77 @@ func configure(args []string, out io.Writer) error {
 		_, err = fmt.Fprintf(out, "Stored Trello credentials in %s\n", p.Credentials)
 		return err
 	}
-	return fmt.Errorf("unknown configure command; use: configure init | configure set SECTION.KEY VALUE | configure secret set SECTION.KEY VALUE | configure trello auth --api-key VALUE --api-token VALUE")
+	return fmt.Errorf("unknown configure command; use 'omni configure --help'")
+}
+
+func configureTrello(p config.Paths, args []string, out io.Writer) error {
+	if len(args) == 0 {
+		return fmt.Errorf("no Trello values supplied; run 'omni configure trello --help'")
+	}
+	settings := map[string]string{}
+	secrets := map[string]string{}
+	seen := map[string]bool{}
+	for len(args) > 0 {
+		if len(args) < 2 || !strings.HasPrefix(args[0], "--") {
+			return fmt.Errorf("expected --OPTION VALUE; run 'omni configure trello --help'")
+		}
+		option, value := args[0], args[1]
+		switch option {
+		case "--default-board", "--default-board-id":
+			if seen["default-board"] {
+				return fmt.Errorf("%s specified more than once", option)
+			}
+			seen["default-board"] = true
+			settings["trello.default-board-id"] = value
+		case "--api-url":
+			if seen[option] {
+				return fmt.Errorf("%s specified more than once", option)
+			}
+			seen[option] = true
+			settings["trello.api-url"] = value
+		case "--api-key":
+			if seen[option] {
+				return fmt.Errorf("%s specified more than once", option)
+			}
+			seen[option] = true
+			secrets["trello.api-key"] = value
+		case "--api-token":
+			if seen[option] {
+				return fmt.Errorf("%s specified more than once", option)
+			}
+			seen[option] = true
+			secrets["trello.api-token"] = value
+		default:
+			return fmt.Errorf("unknown Trello option %s; run 'omni configure trello --help'", option)
+		}
+		args = args[2:]
+	}
+	for key, value := range settings {
+		if err := config.Set(p.Settings, key, value); err != nil {
+			return err
+		}
+	}
+	for key, value := range secrets {
+		if err := config.Set(p.Credentials, key, value); err != nil {
+			return err
+		}
+	}
+	if len(secrets) > 0 {
+		if err := config.Initialize(p); err != nil {
+			return err
+		}
+	}
+	_, err := fmt.Fprintln(out, "Stored Trello configuration. Secret values were not displayed.")
+	return err
+}
+
+func setup(args []string, out io.Writer) error {
+	if len(args) != 1 || args[0] != "trello" {
+		return fmt.Errorf("unknown service; available setup: trello")
+	}
+	key, _ := config.Lookup("trello.api-key")
+	_, err := fmt.Fprintf(out, "Trello setup\n\n1. Get an API key and user token from:\n   %s\n\n2. Configure Omni in one command:\n   omni configure trello --default-board BOARD_ID --api-key API_KEY --api-token API_TOKEN\n\nThe board ID is optional; omit --default-board if you prefer to specify it per command.\n", key.SetupURL)
+	return err
 }
 
 func describe(args []string, out io.Writer) error {

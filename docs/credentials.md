@@ -34,7 +34,7 @@ Trello authenticates API requests with an API key and a user token.
 3. Store both values locally, without editing the secret file directly:
 
 ```bash
-omni configure trello auth --api-key "your-api-key" --api-token "your-user-token"
+omni configure trello --api-key "your-api-key" --api-token "your-user-token"
 ```
 
 4. Start with `omni observe trello board list` when provider calls are enabled. Use separate `create`, `move`, `archive`, and `delete` paths for changes; no observation flag will cause a mutation.
