@@ -66,27 +66,41 @@ When adding a command, test at least:
 - provider request shape and credential redaction where applicable;
 - human and JSON discovery output for new service capabilities.
 
-## Releases
+## Cutting a release
 
-Releases are tag-driven. The version is not stored in Go source: the release workflow compiles the Git tag into `internal/app.Version` with Go linker flags.
+Releases are tag-driven. The version is not stored in Go source: the release workflow compiles the `vX.Y.Z` tag into `internal/app.Version` with Go linker flags. Do not edit Go source merely to change a version.
 
-1. Add `release-notes/X.Y.Z.md` from [the template](release-notes/TEMPLATE.md). Every release note must cover Features, Bug fixes, Breaking changes, Security, and Upgrade notes.
-2. Run `./scripts/check`.
-3. Commit the change, create an annotated `vX.Y.Z` tag, and push the branch and tag.
+Cut a release from the reviewed `master` tip:
+
+1. Choose `X.Y.Z`, add `release-notes/X.Y.Z.md` from [the template](release-notes/TEMPLATE.md), and ensure it covers Features, Bug fixes, Breaking changes, Security, and Upgrade notes.
+2. Run `./scripts/check` and commit the release notes with the release-ready changes.
+3. Confirm the worktree is clean and `master` contains exactly the commit you intend to release.
+4. Push `master`, create an annotated `vX.Y.Z` tag at that same commit, then push the tag:
 
 ```bash
+git status -sb
+git push origin master
 git tag -a vX.Y.Z -m "Omni vX.Y.Z"
-git push origin master vX.Y.Z
+git push origin vX.Y.Z
 ```
 
-The [release workflow](.github/workflows/release.yml) tests and vets the tag, then builds a stripped static Linux x86_64 binary with `CGO_ENABLED=0`. It publishes:
+5. The tag starts the release workflow. Wait for it to finish and inspect the resulting release:
+
+```bash
+gh run list --workflow release.yml --limit 1
+gh release view vX.Y.Z
+```
+
+If the workflow fails, fix the cause with a new commit, push `master`, move the unshared tag only after deliberate review, and re-run the workflow. Never publish a different binary under an already-consumed version by accident.
+
+The [release workflow](.github/workflows/release.yml) tests and vets the tag, then builds a stripped static Linux x86_64 binary with `CGO_ENABLED=0`. It creates the GitHub release using the matching versioned release-note file and publishes:
 
 ```text
 omni_linux_amd64
 omni_linux_amd64.sha256
 ```
 
-The workflow publishes the matching versioned release-note file rather than generated commit text. Verify a finished release with:
+Verify the downloaded, finished release with:
 
 ```bash
 gh release download vX.Y.Z --pattern omni_linux_amd64 --dir /tmp/omni-verify
