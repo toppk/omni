@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Omni is a safety-oriented CLI for service APIs.">
+    <title>Omni — operational clarity</title>
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <main>
+      <nav aria-label="Primary navigation">
+        <a class="wordmark" href="#top" aria-label="Omni home">OMNI<span>_</span></a>
+        <div class="nav-links"><a href="https://github.com/toppk/omni">SOURCE</a><a href="https://github.com/toppk/omni/releases/latest">RELEASES</a></div>
+      </nav>
+      <section class="hero" id="top">
+        <p class="eyebrow">UNIVERSAL OPERATIONAL CLI <span>///</span> HUMAN + AGENT</p>
+        <h1>Make the<br><em>safe thing</em><br>obvious.</h1>
+        <p class="lede">Omni turns service APIs into a command line whose action level is visible before anything can happen.</p>
+        <div class="actions"><a class="button primary" href="#install">INSTALL OMNI <b>↘</b></a><a class="button ghost" href="https://github.com/toppk/omni">VIEW SOURCE <b>↗</b></a></div>
+        <div class="signal-grid" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+      </section>
+      <section class="terminal" aria-label="Omni command examples">
+        <div class="terminal-bar"><span></span><span></span><span></span><b>OMNI // COMMAND VIEW</b></div>
+        <pre><code><mark>$</mark> omni observe trello board list
+<span class="result">  → Lists boards. No mutation. Safe for unattended approval.</span>
+
+<mark>$</mark> omni create trello card create LIST_ID --name "Ship it"
+<span class="alert">  → Creates one card. Interactive approval required.</span>
+
+<mark>$</mark> omni --policy read-only delete trello card delete CARD_ID
+<span class="blocked">  × blocked by read-only policy</span></code></pre>
+      </section>
+      <section class="principles">
+        <p class="section-tag">01 / COMMANDS AS POLICY</p>
+        <div class="principle-grid">
+          <article><span>OBSERVE</span><h2>Read is first-class.</h2><p>Safe operations begin with <code>observe</code>, so tools and people can understand their effect at a glance.</p></article>
+          <article><span>ACT</span><h2>No surprise flags.</h2><p>Create, move, archive, delete, and authorize each get their own left-edge command path.</p></article>
+          <article><span>RESTRICT</span><h2>Policy travels local.</h2><p>Read-only and no-delete modes are enforced by Omni, independently of an agent allowlist.</p></article>
+        </div>
+      </section>
+      <section class="install" id="install">
+        <p class="section-tag">02 / GET STARTED</p>
+        <h2>One binary.<br>Zero ceremony.</h2>
+        <p>Linux x86_64. Downloads the latest checksum-verified release to <code>~/.local/bin</code>; no sudo, package manager, or account required.</p>
+        <div class="install-command"><code>curl -fsSL https://toppk.github.io/omni/install.sh | sh</code><button type="button" data-copy>COPY</button></div>
+        <p class="fine-print">Prefer to inspect first? <a href="install.sh">Read install.sh</a> · <a href="https://github.com/toppk/omni/releases/latest">Download the binary directly</a></p>
+      </section>
+    </main>
+    <footer><span>OMNI / BSD-3-CLAUSE</span><span>BUILT FOR DELIBERATE OPERATIONS</span></footer>
+    <script>document.querySelector('[data-copy]').addEventListener('click', function () { navigator.clipboard.writeText('curl -fsSL https://toppk.github.io/omni/install.sh | sh'); this.textContent = 'COPIED'; });</script>
+  </body>
+</html>

@@ -36,19 +36,20 @@ jobs:
           go test ./...
           go vet ./...
 
-      - name: Build release archive
+      - name: Build release binary
         id: build
         shell: bash
         run: |
           tag="${{ github.event.inputs.tag || github.ref_name }}"
           version="${tag#v}"
-          name="omni_${version}_linux_amd64"
-          mkdir -p dist/"$name"
-          go build -trimpath -ldflags='-s -w' -o dist/"$name"/omni ./cmd/omni
-          cp LICENSE dist/"$name"/LICENSE
-          tar -C dist -czf dist/"$name".tar.gz "$name"
-          sha256sum dist/"$name".tar.gz > dist/"$name".tar.gz.sha256
-          printf 'tag=%s\nname=%s\n' "$tag" "$name" >> "$GITHUB_OUTPUT"
+          asset="omni_linux_amd64"
+          mkdir -p dist
+          go build -trimpath -ldflags='-s -w' -o dist/"$asset" ./cmd/omni
+          (
+            cd dist
+            sha256sum "$asset" > "$asset".sha256
+          )
+          printf 'tag=%s\nversion=%s\nasset=%s\n' "$tag" "$version" "$asset" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub release
         env:
@@ -56,6 +57,6 @@ jobs:
         run: |
           gh release create "${{ steps.build.outputs.tag }}" \
             --title "Omni ${{ steps.build.outputs.tag }}" \
-            --generate-notes \
-            dist/${{ steps.build.outputs.name }}.tar.gz \
-            dist/${{ steps.build.outputs.name }}.tar.gz.sha256
+            --notes-file release-notes/${{ steps.build.outputs.version }}.md \
+            dist/${{ steps.build.outputs.asset }} \
+            dist/${{ steps.build.outputs.asset }}.sha256

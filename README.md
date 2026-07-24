@@ -49,6 +49,20 @@ For example, `trello.api-url` is an optional setting that defaults to `https://a
 
 See [credential setup](docs/credentials.md) before adding API credentials. Tailscale is currently a registered command surface; Trello's core board/list/card operations are live native API calls.
 
+## Install
+
+Linux x86_64 releases are distributed as a single static binary with a SHA-256 checksum. After the next release, install the latest version without elevated permissions:
+
+```bash
+curl -fsSL https://toppk.github.io/omni/install.sh | sh
+```
+
+The script downloads `omni_linux_amd64`, verifies its release checksum, and installs it to `~/.local/bin`. Set `OMNI_INSTALL_DIR` to choose another destination. Read the script before piping it to your shell, or download the binary and checksum directly from [GitHub Releases](https://github.com/toppk/omni/releases/latest).
+
+## Release notes
+
+Each release has a hand-written, versioned note in [release-notes](release-notes/) with features, bug fixes, breaking changes, security, and upgrade guidance. Start future notes from [the template](release-notes/TEMPLATE.md); the release workflow publishes that exact file.
+
 ## Trello commands
 
 After adding a Trello API key and token, commands return JSON suitable for people, shell tools, and agents:
