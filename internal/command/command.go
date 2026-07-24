@@ -56,6 +56,7 @@ type Definition struct {
 	Options      []Option    `json:"options"`
 	Cardinality  Cardinality `json:"cardinality"`
 	Reversible   bool        `json:"reversible"`
+	Reversal     string      `json:"reversal,omitempty"`
 	Credentials  string      `json:"credentials"`
 	UnattendedOK bool        `json:"unattended_ok"`
 }
@@ -76,6 +77,15 @@ func (d Definition) Validate() error {
 	}
 	if d.Description == "" || d.Response == "" {
 		return fmt.Errorf("command %q needs descriptions", d.Name())
+	}
+	if d.UnattendedOK && d.Effect != Observe {
+		return fmt.Errorf("unattended command %q must be observe", d.Name())
+	}
+	if d.Reversible && d.Effect != Observe && d.Reversal == "" {
+		return fmt.Errorf("reversible mutating command %q needs a reversal explanation", d.Name())
+	}
+	if !d.Reversible && d.Reversal != "" {
+		return fmt.Errorf("non-reversible command %q cannot declare a reversal", d.Name())
 	}
 	return nil
 }

@@ -65,6 +65,60 @@ func TestConfigureTrelloStoresSettingsAndSecrets(t *testing.T) {
 	}
 }
 
+func TestSetupAndConfigureTailscale(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	var out bytes.Buffer
+	if err := Run(context.Background(), []string{"setup", "tailscale"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "--client-id CLIENT_ID") || !strings.Contains(out.String(), "tailscale.com") {
+		t.Fatalf("unexpected setup output: %s", out.String())
+	}
+	out.Reset()
+	if err := Run(context.Background(), []string{"configure", "tailscale", "--tailnet", "example.com", "--client-id", "client-id", "--client-secret", "client-secret", "--api-key", "secret-token"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	paths, err := config.DefaultPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings, err := config.LoadTailscaleSettings(paths.Settings)
+	if err != nil || settings.Tailnet != "example.com" || settings.ClientID != "client-id" {
+		t.Fatalf("settings = %#v, err = %v", settings, err)
+	}
+	credentials, err := config.LoadTailscaleCredentials(paths.Credentials)
+	if err != nil || credentials.APIKey != "secret-token" || credentials.ClientSecret != "client-secret" {
+		t.Fatalf("credentials = %#v, err = %v", credentials, err)
+	}
+	if strings.Contains(out.String(), "secret-token") || strings.Contains(out.String(), "client-secret") {
+		t.Fatal("secret appeared in output")
+	}
+}
+
+func TestConfigureDeletesSettingAndSecret(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	var out bytes.Buffer
+	if err := Run(context.Background(), []string{"configure", "tailscale", "--client-id", "client", "--client-secret", "secret"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Run(context.Background(), []string{"configure", "delete", "tailscale.client-id"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Run(context.Background(), []string{"configure", "secret", "delete", "tailscale.client-secret"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	paths, err := config.DefaultPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value, err := config.Get(paths.Settings, "tailscale.client-id"); err != nil || value != "" {
+		t.Fatalf("client id=%q err=%v", value, err)
+	}
+	if value, err := config.Get(paths.Credentials, "tailscale.client-secret"); err != nil || value != "" {
+		t.Fatalf("client secret=%q err=%v", value, err)
+	}
+}
+
 func TestVersionAliases(t *testing.T) {
 	for _, args := range [][]string{{"version"}, {"--version"}, {"-V"}} {
 		var out bytes.Buffer
@@ -82,8 +136,10 @@ func TestDescribeOverviewListsServiceDiscovery(t *testing.T) {
 	if err := Run(context.Background(), []string{"describe"}, &out, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "omni describe trello") {
-		t.Fatalf("missing Trello discovery: %s", out.String())
+	for _, service := range []string{"omni describe trello", "omni describe tailscale"} {
+		if !strings.Contains(out.String(), service) {
+			t.Fatalf("missing service discovery: %s", out.String())
+		}
 	}
 }
 
@@ -125,5 +181,25 @@ func TestDescribeTrelloUsesServiceManualLayout(t *testing.T) {
 	}
 	if strings.Contains(text, "operation_id") || strings.Contains(text, "implemented") {
 		t.Fatalf("internal schema leaked into human manual: %s", text)
+	}
+}
+
+func TestActionServiceHelpUsesServiceManual(t *testing.T) {
+	var out bytes.Buffer
+	if err := Run(context.Background(), []string{"observe", "tailscale", "--help"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "TAILSCALE(1)") || !strings.Contains(out.String(), "acl preview") {
+		t.Fatalf("unexpected contextual help: %s", out.String())
+	}
+}
+
+func TestPolicyExplainNamesACLBackupReversal(t *testing.T) {
+	var out bytes.Buffer
+	if err := Run(context.Background(), []string{"policy", "explain", "administer", "tailscale", "acl", "set"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "reversible: true") || !strings.Contains(out.String(), "pre-change backup") || !strings.Contains(out.String(), "no separate revert command") {
+		t.Fatalf("unexpected policy explanation: %s", out.String())
 	}
 }

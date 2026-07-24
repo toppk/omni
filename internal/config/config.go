@@ -7,9 +7,11 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Paths struct{ Root, Settings, Credentials string }
+type EphemeralPaths struct{ Root, Credentials string }
 
 func DefaultPaths() (Paths, error) {
 	root, err := os.UserConfigDir()
@@ -20,9 +22,27 @@ func DefaultPaths() (Paths, error) {
 	return Paths{root, filepath.Join(root, "settings.toml"), filepath.Join(root, "credentials", "credentials.toml")}, nil
 }
 
+func DefaultEphemeralPaths() (EphemeralPaths, error) {
+	root := os.Getenv("XDG_DATA_HOME")
+	if root == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return EphemeralPaths{}, fmt.Errorf("find home directory: %w", err)
+		}
+		root = filepath.Join(home, ".local", "share")
+	}
+	root = filepath.Join(root, "omni", "ephemeral")
+	return EphemeralPaths{Root: root, Credentials: filepath.Join(root, "credentials.toml")}, nil
+}
+
 type TrelloCredentials struct {
 	APIKey string
 	Token  string
+}
+
+type TailscaleCredentials struct {
+	APIKey       string
+	ClientSecret string
 }
 
 // Entry describes a key in Omni's configuration registry. Entries can have a
@@ -34,13 +54,76 @@ type Entry struct {
 	Default     string
 	Description string
 	SetupURL    string
+	Ephemeral   bool
 }
 
 var Registry = []Entry{
+	{Key: "tailscale.api-url", Default: "https://api.tailscale.com/api/v2", Description: "Tailscale API base URL; override for a compatible mock server."},
+	{Key: "tailscale.tailnet", Default: "-", Description: "Tailnet ID; - selects the tailnet that owns the access token."},
+	{Key: "tailscale.client-id", Description: "OAuth client ID used to issue access tokens."},
+	{Key: "tailscale.client-secret", Secret: true, Description: "OAuth client secret used to issue access tokens.", SetupURL: "https://tailscale.com/docs/features/oauth-clients"},
+	{Key: "tailscale.api-key", Secret: true, Description: "Optional user-provided Tailscale API access-token override.", SetupURL: "https://tailscale.com/docs/reference/tailscale-api"},
+	{Key: "tailscale.generated-api-key", Secret: true, Ephemeral: true, Description: "OAuth-generated access token cached until expiry in XDG data storage."},
 	{Key: "trello.api-url", Default: "https://api.trello.com/1", Description: "Trello REST API base URL; override for a compatible mock server."},
 	{Key: "trello.default-board-id", Description: "Board ID used when a board command omits BOARD_ID."},
 	{Key: "trello.api-key", Secret: true, Required: true, Description: "Trello API key.", SetupURL: "https://developer.atlassian.com/cloud/trello/guides/rest-api/api-introduction/"},
 	{Key: "trello.api-token", Secret: true, Required: true, Description: "Trello user token.", SetupURL: "https://developer.atlassian.com/cloud/trello/guides/rest-api/api-introduction/"},
+}
+
+func LoadTailscaleCredentials(path string) (TailscaleCredentials, error) {
+	key, err := Get(path, "tailscale.api-key")
+	if err != nil {
+		return TailscaleCredentials{}, err
+	}
+	clientSecret, err := Get(path, "tailscale.client-secret")
+	if err != nil {
+		return TailscaleCredentials{}, err
+	}
+	return TailscaleCredentials{APIKey: key, ClientSecret: clientSecret}, nil
+}
+
+func LoadEphemeralTailscaleToken(path string, now time.Time) (string, error) {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return "", nil
+	} else if err != nil {
+		return "", err
+	}
+	token, err := Get(path, "tailscale.generated-api-key")
+	if err != nil {
+		return "", err
+	}
+	expires, err := Get(path, "tailscale.generated-api-key-expires-at")
+	if err != nil || token == "" || expires == "" {
+		return "", err
+	}
+	expiresAt, err := time.Parse(time.RFC3339, expires)
+	if err != nil || !expiresAt.After(now.Add(5*time.Minute)) {
+		return "", nil
+	}
+	return token, nil
+}
+
+func StoreEphemeralTailscaleToken(path, token string, expiresAt time.Time) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+	if err := os.Chmod(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		if err := os.WriteFile(path, []byte("# Generated short-lived secrets. Do not edit.\n"), 0600); err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	}
+	if err := Set(path, "tailscale.generated-api-key", token); err != nil {
+		return err
+	}
+	if err := Set(path, "tailscale.generated-api-key-expires-at", expiresAt.UTC().Format(time.RFC3339)); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0600)
 }
 
 func Lookup(key string) (Entry, bool) {
@@ -111,7 +194,7 @@ func Initialize(p Paths) error {
 	if err := writeIfMissing(p.Settings, []byte("# Omni settings. Restrictions only narrow what commands may do.\npolicy = \"default\"\n"), 0600); err != nil {
 		return err
 	}
-	if err := writeIfMissing(p.Credentials, []byte("# Credentials are local secrets. Keep this file mode 0600.\n# [tailscale]\n# api-key = \"tskey-api-...\"\n#\n# [trello]\n# api-key = \"...\"\n# api-token = \"...\"\n"), 0600); err != nil {
+	if err := writeIfMissing(p.Credentials, []byte("# Credentials are local secrets. Keep this file mode 0600.\n# [tailscale]\n# api-key = \"tskey-api-...\"\n# client-secret = \"...\"\n#\n# [trello]\n# api-key = \"...\"\n# api-token = \"...\"\n"), 0600); err != nil {
 		return err
 	}
 	// WriteFile also retains an existing file's mode. Repair it on every init.
@@ -172,6 +255,49 @@ func Set(path, registryKey, value string) error {
 	return os.WriteFile(path, toml(lines), 0600)
 }
 
+// Delete removes one registry assignment while preserving unrelated sections,
+// comments, and settings. Its boolean result reports whether a value existed.
+func Delete(path, registryKey string) (bool, error) {
+	section, key, ok := strings.Cut(registryKey, ".")
+	if !ok || section == "" || key == "" || strings.Contains(key, ".") {
+		return false, fmt.Errorf("configuration key must have the form section.key")
+	}
+	if registryKey != strings.ToLower(registryKey) {
+		return false, fmt.Errorf("configuration keys must be lower-case")
+	}
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return false, fmt.Errorf("read configuration: %w", err)
+	}
+	lines := strings.Split(string(b), "\n")
+	inSection := false
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "["+section+"]" {
+			inSection = true
+			continue
+		}
+		if strings.HasPrefix(trimmed, "[") {
+			inSection = false
+			continue
+		}
+		if !inSection || trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		current, _, found := strings.Cut(trimmed, "=")
+		if found && strings.TrimSpace(current) == key {
+			lines = append(lines[:i], lines[i+1:]...)
+			return true, os.WriteFile(path, toml(lines), 0600)
+		}
+	}
+	return false, nil
+}
+
 func toml(lines []string) []byte {
 	return []byte(strings.TrimRight(strings.Join(lines, "\n"), "\n") + "\n")
 }
@@ -216,6 +342,34 @@ func Get(path, registryKey string) (string, error) {
 type TrelloSettings struct {
 	APIURL         string
 	DefaultBoardID string
+}
+
+type TailscaleSettings struct {
+	APIURL   string
+	Tailnet  string
+	ClientID string
+}
+
+func LoadTailscaleSettings(path string) (TailscaleSettings, error) {
+	apiURL, err := Get(path, "tailscale.api-url")
+	if err != nil {
+		return TailscaleSettings{}, err
+	}
+	if apiURL == "" {
+		apiURL = "https://api.tailscale.com/api/v2"
+	}
+	tailnet, err := Get(path, "tailscale.tailnet")
+	if err != nil {
+		return TailscaleSettings{}, err
+	}
+	if tailnet == "" {
+		tailnet = "-"
+	}
+	clientID, err := Get(path, "tailscale.client-id")
+	if err != nil {
+		return TailscaleSettings{}, err
+	}
+	return TailscaleSettings{APIURL: apiURL, Tailnet: tailnet, ClientID: clientID}, nil
 }
 
 func LoadTrelloSettings(path string) (TrelloSettings, error) {

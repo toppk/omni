@@ -11,6 +11,7 @@ import (
 	"github.com/toppk/omni/internal/command"
 	"github.com/toppk/omni/internal/config"
 	"github.com/toppk/omni/internal/policy"
+	"github.com/toppk/omni/internal/tailscale"
 	"github.com/toppk/omni/internal/trello"
 )
 
@@ -25,7 +26,9 @@ Usage:
   omni configure SERVICE [OPTIONS]
   omni configure describe
   omni configure set SECTION.KEY VALUE
+  omni configure delete SECTION.KEY
   omni configure secret set SECTION.KEY VALUE
+  omni configure secret delete SECTION.KEY
   omni version
   omni describe [<effect> <service> <resource> <verb>] [--format json]
   omni policy explain <effect> <service> <resource> <verb>
@@ -49,12 +52,29 @@ ordinary settings; --api-key and --api-token are secrets. Secret values are
 never printed by Omni, but command-line values can remain in shell history.
 `
 
+const tailscaleConfigUsage = `Tailscale configuration
+
+Usage:
+  omni configure tailscale [--tailnet TAILNET_ID] [--api-key ACCESS_TOKEN]
+                           [--client-id CLIENT_ID] [--client-secret CLIENT_SECRET] [--api-url URL]
+
+All supplied values are stored at once. --tailnet, --client-id, and --api-url
+are ordinary settings; --api-key and --client-secret are secrets. Omni uses
+the client credentials to issue a short-lived access token for API calls;
+--api-key is an optional explicit token override. Secret values are never
+printed by Omni, but command-line values can remain in shell history.
+`
+
 const configureUsage = `Configure Omni
 
 Usage:
   omni configure SERVICE [OPTIONS]
   omni configure describe
   omni configure help SECTION.KEY
+  omni configure set SECTION.KEY VALUE
+  omni configure delete SECTION.KEY
+  omni configure secret set SECTION.KEY VALUE
+  omni configure secret delete SECTION.KEY
 
 For service-specific options, run "omni configure SERVICE --help".
 `
@@ -67,6 +87,9 @@ func Run(_ context.Context, args []string, out, errOut io.Writer) error {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		_, err := fmt.Fprint(out, usage)
 		return err
+	}
+	if len(args) >= 2 && args[0] != "configure" && args[0] != "setup" && (args[len(args)-1] == "--help" || args[len(args)-1] == "-h") {
+		return contextualHelp(args[:len(args)-1], out)
 	}
 	if len(args) > 0 && args[0] == "configure" {
 		return configure(args[1:], out)
@@ -107,7 +130,48 @@ func Run(_ context.Context, args []string, out, errOut io.Writer) error {
 		}
 		return trello.Execute(d, operands, credentials, settings, out)
 	}
+	if len(d.Path) > 0 && d.Path[0] == "tailscale" {
+		paths, err := config.DefaultPaths()
+		if err != nil {
+			return err
+		}
+		credentials, err := config.LoadTailscaleCredentials(paths.Credentials)
+		if err != nil {
+			return err
+		}
+		settings, err := config.LoadTailscaleSettings(paths.Settings)
+		if err != nil {
+			return err
+		}
+		ephemeral, err := config.DefaultEphemeralPaths()
+		if err != nil {
+			return err
+		}
+		return tailscale.Execute(d, operands, credentials, settings, ephemeral.Credentials, out)
+	}
 	return fmt.Errorf("%s is registered but not implemented yet", d.Name())
+}
+
+func contextualHelp(args []string, out io.Writer) error {
+	if len(args) == 2 && isEffect(args[0]) {
+		if len(serviceOperations(args[1])) == 0 {
+			return fmt.Errorf("unknown service %q", args[1])
+		}
+		return describeService(args[1], false, out)
+	}
+	d, operands, err := command.Match(args)
+	if err != nil || len(operands) != 0 {
+		return fmt.Errorf("unknown command help; run 'omni describe' to see supported operations")
+	}
+	return describeOperation(d, out)
+}
+
+func isEffect(value string) bool {
+	switch command.Effect(value) {
+	case command.Observe, command.Create, command.Update, command.Move, command.Archive, command.Delete, command.Execute, command.Transfer, command.Authorize, command.Administer:
+		return true
+	}
+	return false
 }
 
 func configure(args []string, out io.Writer) error {
@@ -124,6 +188,9 @@ func configure(args []string, out io.Writer) error {
 			kind := "setting"
 			if entry.Secret {
 				kind = "secret"
+			}
+			if entry.Ephemeral {
+				kind = "ephemeral secret"
 			}
 			requirement := "optional"
 			if entry.Required {
@@ -153,6 +220,10 @@ func configure(args []string, out io.Writer) error {
 		_, err = fmt.Fprint(out, trelloConfigUsage)
 		return err
 	}
+	if same(args, []string{"tailscale", "--help"}) || same(args, []string{"tailscale", "help"}) {
+		_, err = fmt.Fprint(out, tailscaleConfigUsage)
+		return err
+	}
 	if err := config.Initialize(p); err != nil {
 		return fmt.Errorf("initialize configuration: %w", err)
 	}
@@ -162,6 +233,9 @@ func configure(args []string, out io.Writer) error {
 	}
 	if len(args) > 0 && args[0] == "trello" {
 		return configureTrello(p, args[1:], out)
+	}
+	if len(args) > 0 && args[0] == "tailscale" {
+		return configureTailscale(p, args[1:], out)
 	}
 	if len(args) == 3 && args[0] == "set" {
 		entry, ok := config.Lookup(args[1])
@@ -177,6 +251,25 @@ func configure(args []string, out io.Writer) error {
 		_, err = fmt.Fprintf(out, "Set %s in %s\n", args[1], p.Settings)
 		return err
 	}
+	if len(args) == 2 && args[0] == "delete" {
+		entry, ok := config.Lookup(args[1])
+		if !ok {
+			return fmt.Errorf("unknown configuration key %q", args[1])
+		}
+		if entry.Secret {
+			return fmt.Errorf("%s is a secret; use configure secret delete", args[1])
+		}
+		deleted, err := config.Delete(p.Settings, args[1])
+		if err != nil {
+			return err
+		}
+		if deleted {
+			_, err = fmt.Fprintf(out, "Deleted %s from %s\n", args[1], p.Settings)
+		} else {
+			_, err = fmt.Fprintf(out, "%s was already absent from %s\n", args[1], p.Settings)
+		}
+		return err
+	}
 	if len(args) == 4 && args[0] == "secret" && args[1] == "set" {
 		entry, ok := config.Lookup(args[2])
 		if !ok {
@@ -185,6 +278,9 @@ func configure(args []string, out io.Writer) error {
 		if !entry.Secret {
 			return fmt.Errorf("%s is not a secret; use configure set", args[2])
 		}
+		if entry.Ephemeral {
+			return fmt.Errorf("%s is managed automatically and cannot be set", args[2])
+		}
 		if err := config.Set(p.Credentials, args[2], args[3]); err != nil {
 			return err
 		}
@@ -192,6 +288,33 @@ func configure(args []string, out io.Writer) error {
 			return err
 		}
 		_, err = fmt.Fprintf(out, "Set secret %s in %s\n", args[2], p.Credentials)
+		return err
+	}
+	if len(args) == 3 && args[0] == "secret" && args[1] == "delete" {
+		entry, ok := config.Lookup(args[2])
+		if !ok {
+			return fmt.Errorf("unknown configuration key %q", args[2])
+		}
+		if !entry.Secret {
+			return fmt.Errorf("%s is not a secret; use configure delete", args[2])
+		}
+		path := p.Credentials
+		if entry.Ephemeral {
+			ephemeral, err := config.DefaultEphemeralPaths()
+			if err != nil {
+				return err
+			}
+			path = ephemeral.Credentials
+		}
+		deleted, err := config.Delete(path, args[2])
+		if err != nil {
+			return err
+		}
+		if deleted {
+			_, err = fmt.Fprintf(out, "Deleted secret %s from %s\n", args[2], path)
+		} else {
+			_, err = fmt.Fprintf(out, "%s was already absent from %s\n", args[2], path)
+		}
 		return err
 	}
 	if len(args) == 6 && same(args[:2], []string{"trello", "auth"}) && args[2] == "--api-key" && args[4] == "--api-token" {
@@ -208,6 +331,55 @@ func configure(args []string, out io.Writer) error {
 		return err
 	}
 	return fmt.Errorf("unknown configure command; use 'omni configure --help'")
+}
+
+func configureTailscale(p config.Paths, args []string, out io.Writer) error {
+	if len(args) == 0 {
+		return fmt.Errorf("no Tailscale values supplied; run 'omni configure tailscale --help'")
+	}
+	settings, secrets, seen := map[string]string{}, map[string]string{}, map[string]bool{}
+	for len(args) > 0 {
+		if len(args) < 2 || !strings.HasPrefix(args[0], "--") {
+			return fmt.Errorf("expected --OPTION VALUE; run 'omni configure tailscale --help'")
+		}
+		option, value := args[0], args[1]
+		if seen[option] {
+			return fmt.Errorf("%s specified more than once", option)
+		}
+		seen[option] = true
+		switch option {
+		case "--tailnet":
+			settings["tailscale.tailnet"] = value
+		case "--client-id":
+			settings["tailscale.client-id"] = value
+		case "--api-url":
+			settings["tailscale.api-url"] = value
+		case "--api-key":
+			secrets["tailscale.api-key"] = value
+		case "--client-secret":
+			secrets["tailscale.client-secret"] = value
+		default:
+			return fmt.Errorf("unknown Tailscale option %s; run 'omni configure tailscale --help'", option)
+		}
+		args = args[2:]
+	}
+	for key, value := range settings {
+		if err := config.Set(p.Settings, key, value); err != nil {
+			return err
+		}
+	}
+	for key, value := range secrets {
+		if err := config.Set(p.Credentials, key, value); err != nil {
+			return err
+		}
+	}
+	if len(secrets) > 0 {
+		if err := config.Initialize(p); err != nil {
+			return err
+		}
+	}
+	_, err := fmt.Fprintln(out, "Stored Tailscale configuration. Secret values were not displayed.")
+	return err
 }
 
 func configureTrello(p config.Paths, args []string, out io.Writer) error {
@@ -272,8 +444,16 @@ func configureTrello(p config.Paths, args []string, out io.Writer) error {
 }
 
 func setup(args []string, out io.Writer) error {
-	if len(args) != 1 || args[0] != "trello" {
-		return fmt.Errorf("unknown service; available setup: trello")
+	if len(args) != 1 {
+		return fmt.Errorf("unknown service; available setup: tailscale, trello")
+	}
+	if args[0] == "tailscale" {
+		oauth, _ := config.Lookup("tailscale.client-secret")
+		_, err := fmt.Fprintf(out, "Tailscale setup\n\nChoose one authentication method:\n\n1. API access token — simple, broad tailnet access, expires in 1–90 days:\n   https://tailscale.com/docs/reference/tailscale-api\n   omni configure tailscale --api-key ACCESS_TOKEN\n\n2. OAuth client — scoped, short-lived access tokens minted automatically:\n   %s\n   omni configure tailscale --client-id CLIENT_ID --client-secret CLIENT_SECRET\n\nIf both are configured, Omni uses the explicit API access token. OAuth-minted tokens are cached in secured XDG data storage until shortly before expiry. The tailnet defaults to - (the credential's owning tailnet).\n\nStart with an observe command. Replacing tags and applying policy are separate authorization and administration operations.\n", oauth.SetupURL)
+		return err
+	}
+	if args[0] != "trello" {
+		return fmt.Errorf("unknown service; available setup: tailscale, trello")
 	}
 	key, _ := config.Lookup("trello.api-key")
 	_, err := fmt.Fprintf(out, "Trello setup\n\n1. Get an API key and user token from:\n   %s\n\n2. Configure Omni in one command:\n   omni configure trello --default-board BOARD_ID --api-key API_KEY --api-token API_TOKEN\n\nThe board ID is optional; omit --default-board if you prefer to specify it per command.\n", key.SetupURL)
@@ -320,6 +500,7 @@ type operationInfo struct {
 	ResponseDescription string              `json:"response_description"`
 	Cardinality         command.Cardinality `json:"cardinality"`
 	Reversible          bool                `json:"reversible"`
+	Reversal            string              `json:"reversal,omitempty"`
 	Credentials         string              `json:"credentials"`
 	UnattendedOK        bool                `json:"unattended_ok"`
 	Arguments           []command.Argument  `json:"arguments"`
@@ -335,7 +516,7 @@ func operationInfoFor(d command.Definition) operationInfo {
 	if options == nil {
 		options = []command.Option{}
 	}
-	return operationInfo{d.OperationID(), d.Tokens(), d.Effect, d.Summary, d.Description, d.Response, d.Cardinality, d.Reversible, d.Credentials, d.UnattendedOK, arguments, options}
+	return operationInfo{OperationID: d.OperationID(), Command: d.Tokens(), Effect: d.Effect, Summary: d.Summary, Description: d.Description, ResponseDescription: d.Response, Cardinality: d.Cardinality, Reversible: d.Reversible, Reversal: d.Reversal, Credentials: d.Credentials, UnattendedOK: d.UnattendedOK, Arguments: arguments, Options: options}
 }
 
 type serviceDescription struct {
@@ -395,6 +576,10 @@ func describeService(service string, jsonFormat bool, out io.Writer) error {
 		_, err := fmt.Fprint(out, "CONFIGURATION\n       Get Trello credentials and configuration guidance:\n\n               omni setup trello\n\n       Configure settings and credentials in one command:\n\n               omni configure trello [--default-board BOARD_ID] [--api-key API_KEY]\n                       [--api-token API_TOKEN] [--api-url URL]\n\n       The API key and token are stored as local secrets; the default board and\n       API URL are ordinary local settings.\n")
 		return err
 	}
+	if service == "tailscale" {
+		_, err := fmt.Fprint(out, "CONFIGURATION\n       See both authentication choices:\n\n               omni setup tailscale\n\n       API-token path (simple, broad):\n\n               omni configure tailscale --api-key ACCESS_TOKEN\n\n       OAuth-client path (scoped):\n\n               omni configure tailscale --client-id CLIENT_ID --client-secret CLIENT_SECRET\n\n       If both are configured, the API token wins. OAuth-minted access tokens\n       are cached in secured XDG data storage until shortly before expiry. Client\n       ID, tailnet, and API URL are ordinary settings; the client secret and API\n       token are local secrets.\n")
+		return err
+	}
 	return nil
 }
 
@@ -432,7 +617,11 @@ func writeCommandDetails(d command.Definition, out io.Writer) error {
 			return err
 		}
 		for _, option := range d.Options {
-			if _, err := fmt.Fprintf(out, "               %s %s\n                   %s\n", option.Name, option.Value, option.Description); err != nil {
+			name := option.Name
+			if option.Value != "" {
+				name += " " + option.Value
+			}
+			if _, err := fmt.Fprintf(out, "               %s\n                   %s\n", name, option.Description); err != nil {
 				return err
 			}
 		}
@@ -460,7 +649,11 @@ func writeArgumentsOptions(d command.Definition, out io.Writer) error {
 			return err
 		}
 		for _, option := range d.Options {
-			if _, err := fmt.Fprintf(out, "       %s %s\n           %s\n", option.Name, option.Value, option.Description); err != nil {
+			name := option.Name
+			if option.Value != "" {
+				name += " " + option.Value
+			}
+			if _, err := fmt.Fprintf(out, "       %s\n           %s\n", name, option.Description); err != nil {
 				return err
 			}
 		}
@@ -481,7 +674,10 @@ func synopsis(d command.Definition) string {
 		}
 	}
 	for _, option := range d.Options {
-		value := option.Name + " " + option.Value
+		value := option.Name
+		if option.Value != "" {
+			value += " " + option.Value
+		}
 		if option.Optional {
 			value = "[" + value + "]"
 		}
@@ -523,7 +719,7 @@ func serviceSummary(service string) string {
 		return "List and change Trello boards, lists, and cards."
 	}
 	if service == "tailscale" {
-		return "Tailnet administration operations."
+		return "Inspect and deliberately administer a Tailscale tailnet."
 	}
 	return ""
 }
@@ -537,7 +733,14 @@ func explain(args []string, out io.Writer) error {
 	if d.UnattendedOK {
 		approval = "eligible for safe-unattended approval"
 	}
-	_, err = fmt.Fprintf(out, "%s\neffect: %s\ncardinality: %s\nreversible: %t\ncredentials: %s\napproval: %s\n", d.Name(), d.Effect, d.Cardinality, d.Reversible, d.Credentials, approval)
+	reversal := "not automatically reversible"
+	if d.Reversible {
+		reversal = d.Reversal
+		if reversal == "" {
+			reversal = "the service operation has a compensating or non-destructive path"
+		}
+	}
+	_, err = fmt.Fprintf(out, "%s\neffect: %s\ncardinality: %s\nreversible: %t\nreversal: %s\ncredentials: %s\napproval: %s\n", d.Name(), d.Effect, d.Cardinality, d.Reversible, reversal, d.Credentials, approval)
 	return err
 }
 

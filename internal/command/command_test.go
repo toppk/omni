@@ -13,3 +13,30 @@ func TestEffectIsFirstCommandToken(t *testing.T) {
 		}
 	}
 }
+
+func TestRegistrySafetyContractInvariants(t *testing.T) {
+	for _, d := range Registry {
+		if err := d.Validate(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestDefinitionRejectsUnsafeContractClaims(t *testing.T) {
+	base := Definition{Effect: Update, Path: []string{"test", "thing"}, Summary: "Test.", Description: "Test command.", Response: "Test result."}
+	unsafe := base
+	unsafe.UnattendedOK = true
+	if err := unsafe.Validate(); err == nil {
+		t.Fatal("mutating unattended command was accepted")
+	}
+	reversible := base
+	reversible.Reversible = true
+	if err := reversible.Validate(); err == nil {
+		t.Fatal("reversible mutation without a reversal was accepted")
+	}
+	incorrect := base
+	incorrect.Reversal = "not applicable"
+	if err := incorrect.Validate(); err == nil {
+		t.Fatal("non-reversible command with reversal was accepted")
+	}
+}

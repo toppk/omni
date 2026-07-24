@@ -58,3 +58,18 @@ func TestSetWritesAndUpdatesRegistryKey(t *testing.T) {
 		t.Fatalf("settings = %q, want %q", got, want)
 	}
 }
+
+func TestDeleteRemovesOnlyRequestedRegistryKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "credentials.toml")
+	if err := os.WriteFile(path, []byte("[tailscale]\napi-key = \"token\"\nclient-secret = \"secret\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	deleted, err := Delete(path, "tailscale.api-key")
+	if err != nil || !deleted {
+		t.Fatalf("deleted=%t err=%v", deleted, err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil || string(b) != "[tailscale]\nclient-secret = \"secret\"\n" {
+		t.Fatalf("content=%q err=%v", b, err)
+	}
+}

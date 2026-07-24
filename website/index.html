@@ -3,26 +3,32 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="Omni is a safety-oriented CLI for service APIs.">
-    <title>Omni — operational clarity</title>
+    <meta name="description" content="Omni is a safety-oriented CLI for Trello and Tailscale APIs, with action-first commands for humans and agents.">
+    <title>Omni — safe Trello and Tailscale CLI</title>
     <link rel="stylesheet" href="style.css">
+    <style>
+      .services{padding:124px 0 0}.services-heading{display:flex;justify-content:space-between;align-items:end;gap:32px;margin:22px 0 34px}.services-heading h2{font-size:clamp(2.7rem,6vw,4.7rem);line-height:.9;letter-spacing:-.08em;margin:0}.services-heading h2 em{font-style:normal;color:var(--cyan);text-shadow:4px 4px 0 var(--pink)}.services-heading>p{max-width:420px;color:var(--muted);line-height:1.7;font-size:.88rem;margin:0}.service-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}.service-card{min-height:265px;padding:30px;border:1px solid var(--line);background:linear-gradient(135deg,#0d1221,#090b13 70%);position:relative;overflow:hidden}.service-card:after{content:"";position:absolute;width:130px;height:130px;right:-48px;bottom:-48px;border:1px solid var(--line);transform:rotate(35deg)}.service-number{color:var(--muted);font-size:.66rem;letter-spacing:.1em}.service-card h3{font-size:2.2rem;letter-spacing:-.08em;margin:30px 0 12px}.service-card>p:not(.service-number){color:var(--muted);line-height:1.65;font-size:.86rem;max-width:390px}.service-card code{display:block;margin-top:28px;color:var(--acid);font-size:.76rem}.trello-service{border-top:3px solid var(--pink)}.trello-service h3{color:var(--pink)}.tailscale-service{border-top:3px solid var(--cyan)}.tailscale-service h3{color:var(--cyan)}@media(max-width:650px){.services{padding-top:78px}.services-heading{display:block}.services-heading>p{margin-top:22px}.service-grid{grid-template-columns:1fr}}
+    </style>
   </head>
   <body>
     <main>
       <nav aria-label="Primary navigation">
         <a class="wordmark" href="#top" aria-label="Omni home">OMNI<span>_</span></a>
-        <div class="nav-links"><a href="https://github.com/toppk/omni">SOURCE</a><a href="https://github.com/toppk/omni/releases/latest">RELEASES</a></div>
+        <div class="nav-links"><a href="#services">SERVICES</a><a href="https://github.com/toppk/omni">SOURCE</a><a href="https://github.com/toppk/omni/releases/latest">RELEASES</a></div>
       </nav>
       <section class="hero" id="top">
         <p class="eyebrow">UNIVERSAL OPERATIONAL CLI <span>///</span> HUMAN + AGENT</p>
         <h1>Make the<br><em>safe thing</em><br>obvious.</h1>
-        <p class="lede">Omni turns service APIs into a command line whose action level is visible before anything can happen.</p>
+        <p class="lede">Omni turns service APIs into a command line whose action level is visible before anything can happen. Two live integrations: Trello and Tailscale.</p>
         <div class="actions"><a class="button primary" href="#install">INSTALL OMNI <b>↘</b></a><a class="button ghost" href="https://github.com/toppk/omni">VIEW SOURCE <b>↗</b></a></div>
         <div class="signal-grid" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
       </section>
       <section class="terminal" aria-label="Omni command examples">
         <div class="terminal-bar"><span></span><span></span><span></span><b>OMNI // COMMAND VIEW</b></div>
-        <pre><code><mark>$</mark> omni observe trello board list
+        <pre><code><mark>$</mark> omni observe tailscale device list
+<span class="result">  → Lists device IDs, hostnames, OS, and last-seen time.</span>
+
+<mark>$</mark> omni observe trello board list
 <span class="result">  → Lists boards. No mutation. Safe for unattended approval.</span>
 
 <mark>$</mark> omni create trello card create LIST_ID --name "Ship it"
@@ -31,8 +37,16 @@
 <mark>$</mark> omni --policy read-only delete trello card delete CARD_ID
 <span class="blocked">  × blocked by read-only policy</span></code></pre>
       </section>
+      <section class="services" id="services">
+        <p class="section-tag">02 / ACTIVE SERVICES</p>
+        <div class="services-heading"><h2>Two services.<br><em>Live today.</em></h2><p>Not a speculative catalog. These are native integrations with real setup flows, capability discovery, and fixed reviewed API requests.</p></div>
+        <div class="service-grid">
+          <article class="service-card trello-service"><p class="service-number">SERVICE / 01</p><h3>Trello</h3><p>Boards, lists, and cards—read first, then create, move, archive, or delete with a visible action level.</p><code>omni describe trello</code></article>
+          <article class="service-card tailscale-service"><p class="service-number">SERVICE / 02</p><h3>Tailscale</h3><p>Tailnet devices, routes, users, and policy with compact agent-oriented observation and deliberate administration paths.</p><code>omni describe tailscale</code></article>
+        </div>
+      </section>
       <section class="principles">
-        <p class="section-tag">01 / COMMANDS AS POLICY</p>
+        <p class="section-tag">03 / COMMANDS AS POLICY</p>
         <div class="principle-grid">
           <article><span>OBSERVE</span><h2>Read is first-class.</h2><p>Safe operations begin with <code>observe</code>, so tools and people can understand their effect at a glance.</p></article>
           <article><span>ACT</span><h2>No surprise flags.</h2><p>Create, move, archive, delete, and authorize each get their own left-edge command path.</p></article>
@@ -40,7 +54,7 @@
         </div>
       </section>
       <section class="install" id="install">
-        <p class="section-tag">02 / GET STARTED</p>
+        <p class="section-tag">04 / GET STARTED</p>
         <h2>One binary.<br>Zero ceremony.</h2>
         <p>Linux x86_64. Downloads the latest checksum-verified release to <code>~/.local/bin</code>; no sudo, package manager, or account required. It reports before/after versions and refuses to replace another program named <code>omni</code>.</p>
         <div class="install-command"><code>curl -fsSL https://toppk.github.io/omni/install.sh | sh</code><button type="button" data-copy>COPY</button></div>

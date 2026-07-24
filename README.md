@@ -7,6 +7,22 @@
 
 Omni is a dependency-light Go CLI that exposes service APIs through command paths whose safety class is visible at the left edge of the command.
 
+## Active services
+
+Omni currently ships **two live native service integrations**—Trello and
+Tailscale. Both have setup and credential guidance, action-first discovery,
+local policy enforcement, and tested API request paths.
+
+| Service | What Omni can do today |
+| --- | --- |
+| [Trello](docs/trello.md) | Observe boards, lists, and cards; create, move, archive, and delete cards. |
+| [Tailscale](docs/tailscale.md) | Observe devices, routes, users, and policy; deliberately update names, tags, and policy files. |
+
+```bash
+omni describe trello
+omni describe tailscale
+```
+
 ```text
 omni observe trello board list
 omni observe trello card get CARD_ID
@@ -26,7 +42,7 @@ go run ./cmd/omni describe --format=json
 
 Check the installed release version with `omni version`, `omni --version`, or `omni -V`. Local builds report `dev`; release builds receive their version from the Git tag during compilation.
 
-`configure init` creates the only two configuration files used by the initial skeleton:
+`configure init` creates Omni's user-managed configuration files:
 
 ```text
 ~/.config/omni/settings.toml
@@ -46,11 +62,11 @@ omni configure help trello.api-key
 
 The Trello command stores ordinary settings in `settings.toml` and secrets only in `credentials/credentials.toml`. Commands acknowledge keys but never print secret values. Shell arguments can remain in history or be visible to local processes, so use a short-lived shell or clear the relevant history entry after using the convenience form.
 
-`omni configure help trello.api-key` prints Trello's official API introduction and credential guide: [developer.atlassian.com/cloud/trello/guides/rest-api/api-introduction](https://developer.atlassian.com/cloud/trello/guides/rest-api/api-introduction/). Advanced registry setters remain available through `omni configure set` and `omni configure secret set`.
+`omni configure help trello.api-key` prints Trello's official API introduction and credential guide: [developer.atlassian.com/cloud/trello/guides/rest-api/api-introduction](https://developer.atlassian.com/cloud/trello/guides/rest-api/api-introduction/). Advanced registry setters and removal commands are available through `omni configure set`, `omni configure delete`, `omni configure secret set`, and `omni configure secret delete`.
 
 For example, `trello.api-url` is an optional setting that defaults to `https://api.trello.com/1`. Point it at a compatible mock server with `omni configure trello --api-url URL`; this override applies to the native Trello client without changing code.
 
-See [credential setup](docs/credentials.md) before adding API credentials. Trello's core board/list/card operations are live native API calls; Tailscale is the next planned integration.
+See [provider documentation](docs/index.md) and [credential setup](docs/credentials.md) before adding API credentials.
 
 ## Install
 
@@ -79,6 +95,47 @@ omni delete trello card delete CARD_ID
 ```
 
 The first four are `observe` commands. The change operations have their own action-level prefix, so no flag can transform an approved observation into a modification.
+
+## Tailscale commands
+
+Tailscale can use either a simple broad API access token or a scoped OAuth
+client. The full credential and token-cache behavior is in
+[docs/tailscale.md](docs/tailscale.md). It defaults to the tailnet that owns
+the active token:
+
+```bash
+omni setup tailscale
+omni configure tailscale --api-key ACCESS_TOKEN
+# Or use a scoped OAuth client:
+omni configure tailscale --client-id CLIENT_ID --client-secret CLIENT_SECRET
+
+omni observe tailscale device list
+omni observe tailscale device list --details
+omni observe tailscale device get DEVICE_ID
+omni observe tailscale device route list DEVICE_ID
+omni update tailscale device name set DEVICE_ID NAME
+omni authorize tailscale device tag set DEVICE_ID tag:prod
+omni observe tailscale acl get --output acl.hujson
+omni observe tailscale acl validate acl.hujson
+omni observe tailscale acl preview --for tag:github
+omni administer tailscale acl set acl.hujson --backup acl-before-change.hujson
+omni observe tailscale key list
+omni observe tailscale key get KEY_ID
+omni observe tailscale dns get
+omni observe tailscale user list
+omni observe tailscale user get USER_ID
+```
+
+Device and user views intentionally return compact records. Device lists show
+only the ID, hostname, OS, and last-seen time by default; `--details` adds
+selection context without requiring a get-per-device loop. ACL download
+always writes a new private file rather than placing a potentially large
+tailnet ACL in terminal or agent context. Validate a proposed ACL through the
+read-only Tailscale validation endpoint before applying it: failed validation
+returns a nonzero exit status. Preview identifies the rules matching a source
+identity without applying a change. ACL replacement validates the candidate,
+requires a new private backup file, and uses an ETag guard. Tag replacement and
+ACL replacement have their own high-impact effect paths.
 
 ## Capability discovery
 

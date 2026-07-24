@@ -7,7 +7,7 @@ This document is the operating guide for contributors and release maintainers. T
 - Omni has no runtime third-party Go dependencies unless one provides a clear capability unavailable in the standard library.
 - Development-only tools are welcome when they materially improve correctness or delivery; document their purpose and invocation before adding them.
 - Command schemas are security contracts. An operation's effect must be determined by its left-hand command path, never by a later flag.
-- Credentials belong only in `~/.config/omni/credentials/credentials.toml`; never add credentials, `.env` files, or real configuration to the repository.
+- User-provided credentials belong in `~/.config/omni/credentials/credentials.toml`. Generated short-lived secrets may use the secured XDG-data ephemeral store; never add credentials, `.env` files, or real configuration to the repository.
 
 ## Contributing
 
@@ -112,5 +112,40 @@ Keep the website's install command, the installer asset name, and the release wo
 
 - `README.md`: what Omni is, how to install it, and how to start using it.
 - `DEVELOPING.md`: contributor workflow, testing, releases, Pages, and SDLC decisions.
-- `docs/`: provider-specific operator and credential guidance.
+- `docs/`: provider-specific operator and credential guidance, plus the service-onboarding guide.
 - `release-notes/`: user-facing notes for each tagged release.
+
+## Onboarding a service
+
+The detailed design guide is [docs/onboarding.md](docs/onboarding.md). This
+section is the contributor checklist.
+
+Build new providers locally before a release or push. The normal loop is:
+
+```bash
+go run ./cmd/omni describe SERVICE
+go build -o ./bin/omni ./cmd/omni
+./bin/omni setup SERVICE
+./bin/omni describe SERVICE
+./scripts/check
+```
+
+For every new service:
+
+1. Add `docs/SERVICE.md` and link it from `docs/index.md`. Record the official
+   API reference, supported endpoints, credential acquisition, required
+   permissions, and meaningful safety constraints.
+2. Put endpoints that users may reasonably need to override in the config
+   registry as code defaults. Keep secrets in the credential registry and give
+   every credential key an official setup URL.
+3. Design the operation path before the HTTP client. The leftmost effect must
+   express the highest-impact action; no option may promote an observe command
+   into a mutation. Do not publish speculative commands in discovery.
+4. Keep default responses compact and task-oriented. Large or sensitive
+   documents should be written to an explicit, safely-created file rather than
+   expanded into agent context or terminal output.
+5. Implement only fixed, reviewed request shapes. Test those requests with an
+   in-memory HTTP transport, including authentication and credential redaction.
+6. Exercise configuration, service discovery, a local binary, and the full
+   quality gate before considering a commit. Real credentials are for manual
+   refinement only and never for automated tests.
