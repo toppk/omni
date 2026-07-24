@@ -55,7 +55,7 @@ Linux x86_64 releases are distributed as a single static binary with a SHA-256 c
 curl -fsSL https://toppk.github.io/omni/install.sh | sh
 ```
 
-The script downloads `omni_linux_amd64`, verifies its release checksum, and installs it to `~/.local/bin`. Set `OMNI_INSTALL_DIR` to choose another destination. Read the script before piping it to your shell, or download the binary and checksum directly from [GitHub Releases](https://github.com/toppk/omni/releases/latest).
+The script downloads `omni_linux_amd64`, verifies its release checksum, reports the before/after version, and installs it to `~/.local/bin`. It refuses to overwrite a binary that does not identify as an Omni release, or conflict with another `omni` command on `PATH`. Set `OMNI_INSTALL_DIR` to choose another destination. Read the script before piping it to your shell, or download the binary and checksum directly from [GitHub Releases](https://github.com/toppk/omni/releases/latest).
 
 ## Trello commands
 
