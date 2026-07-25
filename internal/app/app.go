@@ -54,7 +54,7 @@ never printed by Omni, but command-line values can remain in shell history.
 --default-board is optional. If you do not know a board ID, configure the API
 key and token first, then list visible boards:
   omni observe trello board list
-  omni observe trello board list | jq -r '.boards[] | "\(.id)\t\(.name)"'
+  omni observe trello board list --format json | jq -r '.boards[] | "\(.id)\t\(.name)"'
 
 Choose an ID from that output and store it later:
   omni configure set trello.default-board-id BOARD_ID

@@ -39,7 +39,7 @@ If you do not know the board ID, configure the API key and token first without
 ```bash
 omni observe trello board list
 # Optional concise ID and name view when jq is available:
-omni observe trello board list | jq -r '.boards[] | "\(.id)\t\(.name)"'
+omni observe trello board list --format json | jq -r '.boards[] | "\(.id)\t\(.name)"'
 omni configure set trello.default-board-id BOARD_ID
 ```
 

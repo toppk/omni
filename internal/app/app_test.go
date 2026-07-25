@@ -37,6 +37,7 @@ func TestConfigureTrelloHelpDoesNotInitializeFiles(t *testing.T) {
 	for _, want := range []string{
 		"--api-token",
 		"omni observe trello board list",
+		"omni observe trello board list --format json | jq",
 		"omni configure set trello.default-board-id BOARD_ID",
 	} {
 		if !strings.Contains(out.String(), want) {
