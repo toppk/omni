@@ -11,6 +11,7 @@ import (
 
 	"github.com/toppk/omni/internal/command"
 	"github.com/toppk/omni/internal/config"
+	"github.com/toppk/omni/internal/output"
 )
 
 func TestRequestAddsCredentialsAndJSONPayload(t *testing.T) {
@@ -213,6 +214,25 @@ func TestAttachmentListRequestsAndReturnsCompactAttachments(t *testing.T) {
 	}
 	if result.CardID != "card-1" || len(result.Attachments) != 1 || result.Attachments[0]["id"] != "attachment-1" || result.Attachments[0]["name"] != "chart.png" || result.Attachments[0]["previews"] != nil {
 		t.Fatalf("attachments = %#v", result)
+	}
+}
+
+func TestAttachmentListRendersTextWhenRequested(t *testing.T) {
+	stubExecuteClient(t, func(r *http.Request) (*http.Response, error) {
+		return jsonResponse(r, `[{"id":"attachment-1","name":"chart.png","mimeType":"image/png","bytes":42}]`), nil
+	})
+	d, err := command.Find([]string{"observe", "trello", "attachment", "list"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := ExecuteWithFormat(d, []string{"card-1"}, config.TrelloCredentials{}, config.TrelloSettings{APIURL: "https://example.test"}, output.Text, &out); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"CARD ID: card-1", "ATTACHMENTS (1)", "attachment-1", "chart.png"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("text output missing %q:\n%s", want, out.String())
+		}
 	}
 }
 

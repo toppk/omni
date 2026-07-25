@@ -16,6 +16,7 @@ import (
 
 	"github.com/toppk/omni/internal/command"
 	"github.com/toppk/omni/internal/config"
+	"github.com/toppk/omni/internal/output"
 )
 
 type Client struct {
@@ -153,11 +154,19 @@ func (c *Client) tailnetPath(suffix string) string {
 // Execute maps fixed command definitions to fixed API endpoints. It provides
 // no arbitrary endpoint, method, or request-body escape hatch.
 func Execute(d command.Definition, args []string, creds config.TailscaleCredentials, settings config.TailscaleSettings, cachePath string, out io.Writer) error {
+	return ExecuteWithFormat(d, args, creds, settings, cachePath, output.JSON, out)
+}
+
+func ExecuteWithFormat(d command.Definition, args []string, creds config.TailscaleCredentials, settings config.TailscaleSettings, cachePath string, format output.Format, out io.Writer) error {
 	c := NewClientWithCache(creds, settings, cachePath)
-	return c.execute(d, args, out)
+	return c.executeWithFormat(d, args, format, out)
 }
 
 func (c *Client) execute(d command.Definition, args []string, out io.Writer) error {
+	return c.executeWithFormat(d, args, output.JSON, out)
+}
+
+func (c *Client) executeWithFormat(d command.Definition, args []string, format output.Format, out io.Writer) error {
 	var result any
 	switch d.Name() {
 	case "observe tailscale device list":
@@ -264,7 +273,7 @@ func (c *Client) execute(d command.Definition, args []string, out io.Writer) err
 		}
 		result = map[string]any{"acl_file": args[0], "status": validationStatus(validation), "validation": validation}
 		if validationStatus(validation) == "invalid" {
-			if err := json.NewEncoder(out).Encode(result); err != nil {
+			if err := output.Encode(out, format, result); err != nil {
 				return err
 			}
 			return fmt.Errorf("Tailscale ACL validation failed: %s", validationMessage(validation))
@@ -419,7 +428,7 @@ func (c *Client) execute(d command.Definition, args []string, out io.Writer) err
 	default:
 		return fmt.Errorf("%s is registered but not implemented", d.Name())
 	}
-	return json.NewEncoder(out).Encode(result)
+	return output.Encode(out, format, result)
 }
 
 func (c *Client) json(method, endpoint string, value any) ([]byte, http.Header, error) {

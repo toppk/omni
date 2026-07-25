@@ -10,6 +10,7 @@ import (
 
 	"github.com/toppk/omni/internal/command"
 	"github.com/toppk/omni/internal/config"
+	"github.com/toppk/omni/internal/output"
 	"github.com/toppk/omni/internal/policy"
 	"github.com/toppk/omni/internal/tailscale"
 	"github.com/toppk/omni/internal/trello"
@@ -22,16 +23,19 @@ var Version = "dev"
 const usage = `Omni is a safety-oriented CLI for service APIs.
 
 Usage:
-  omni describe [SERVICE] [--format json]
+  omni describe [SERVICE] [--format text|json]
   omni describe <effect> <service> <resource> <verb>
   omni setup SERVICE
   omni configure SERVICE [OPTIONS]
-  omni [--policy MODE] <effect> <service> <resource> <verb>
+  omni [--policy MODE] <effect> <service> <resource> <verb> [--format text|json]
 
 The effect is always the first token after "omni": observe, create, update,
 move, archive, delete, execute, transfer, authorize, or administer.
 Arguments and flags may identify resources or format output, but may not change
 an operation's effect.
+
+Service commands render text by default. Set OMNI_OUTPUT=json for a
+machine-readable default, or use --format text|json after the effect.
 
 Use "omni describe" to discover services and their operations. Use
 "omni configure --help" for low-level registry commands, or "omni version"
@@ -111,6 +115,10 @@ func Run(_ context.Context, args []string, out, errOut io.Writer) error {
 	if len(args) >= 2 && args[0] == "--policy" {
 		mode, args = args[1], args[2:]
 	}
+	args, format, err := operationOutput(args)
+	if err != nil {
+		return err
+	}
 	d, operands, e := command.Match(args)
 	if e != nil {
 		return fmt.Errorf("%w\nrun 'omni describe' to see supported operations", e)
@@ -131,7 +139,7 @@ func Run(_ context.Context, args []string, out, errOut io.Writer) error {
 		if err != nil {
 			return err
 		}
-		return trello.Execute(d, operands, credentials, settings, out)
+		return trello.ExecuteWithFormat(d, operands, credentials, settings, format, out)
 	}
 	if len(d.Path) > 0 && d.Path[0] == "tailscale" {
 		paths, err := config.DefaultPaths()
@@ -150,7 +158,7 @@ func Run(_ context.Context, args []string, out, errOut io.Writer) error {
 		if err != nil {
 			return err
 		}
-		return tailscale.Execute(d, operands, credentials, settings, ephemeral.Credentials, out)
+		return tailscale.ExecuteWithFormat(d, operands, credentials, settings, ephemeral.Credentials, format, out)
 	}
 	return fmt.Errorf("%s is registered but not implemented yet", d.Name())
 }
@@ -178,6 +186,13 @@ func rootHelp(out io.Writer) error {
 }
 
 func contextualHelp(args []string, out io.Writer) error {
+	if len(args) > 0 && isEffect(args[0]) {
+		var err error
+		args, _, err = operationOutput(args)
+		if err != nil {
+			return err
+		}
+	}
 	if len(args) == 2 && isEffect(args[0]) {
 		if len(serviceOperations(args[1])) == 0 {
 			return fmt.Errorf("unknown service %q", args[1])
@@ -486,17 +501,11 @@ func setup(args []string, out io.Writer) error {
 }
 
 func describe(args []string, out io.Writer) error {
-	jsonFormat := false
-	filtered := make([]string, 0, len(args))
-	for _, a := range args {
-		if a == "--format=json" {
-			jsonFormat = true
-		} else if a == "--format" || a == "--json" {
-			return fmt.Errorf("use --format=json")
-		} else {
-			filtered = append(filtered, a)
-		}
+	filtered, format, err := extractOutput(args, 0)
+	if err != nil {
+		return err
 	}
+	jsonFormat := format == output.JSON
 	if len(filtered) == 0 {
 		return describeOverview(jsonFormat, out)
 	}
@@ -514,6 +523,55 @@ func describe(args []string, out io.Writer) error {
 		return describeOperation(d, out)
 	}
 	return fmt.Errorf("unknown service or command %q", strings.Join(filtered, " "))
+}
+
+func operationOutput(args []string) ([]string, output.Format, error) {
+	if len(args) == 0 {
+		return nil, "", fmt.Errorf("missing effect")
+	}
+	return extractOutput(args, 1)
+}
+
+func extractOutput(args []string, start int) ([]string, output.Format, error) {
+	format, err := defaultOutput()
+	if err != nil {
+		return nil, "", err
+	}
+	filtered := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		value := args[i]
+		if i >= start && value == "--format" {
+			if i+1 == len(args) {
+				return nil, "", fmt.Errorf("--format requires text or json")
+			}
+			i++
+			format, err = output.Parse(args[i])
+			if err != nil {
+				return nil, "", err
+			}
+			continue
+		}
+		if i >= start && strings.HasPrefix(value, "--format=") {
+			format, err = output.Parse(strings.TrimPrefix(value, "--format="))
+			if err != nil {
+				return nil, "", err
+			}
+			continue
+		}
+		if i >= start && value == "--json" {
+			return nil, "", fmt.Errorf("use --format json")
+		}
+		filtered = append(filtered, value)
+	}
+	return filtered, format, nil
+}
+
+func defaultOutput() (output.Format, error) {
+	value := os.Getenv("OMNI_OUTPUT")
+	if value == "" {
+		return output.Text, nil
+	}
+	return output.Parse(value)
 }
 
 type operationInfo struct {

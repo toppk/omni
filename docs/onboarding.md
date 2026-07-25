@@ -143,6 +143,12 @@ signals. Add `--details` only when it prevents an agent from needing a
 list-then-get loop, and make its additional fields explicit. Do not create a
 raw-output escape hatch by default.
 
+Render the compact response as text by default for people and as JSON when
+`--format json` or `OMNI_OUTPUT=json` requests the machine contract. Both forms
+must be derived from one response value: do not maintain separate provider
+encoders. Presentation is allowed only after the effect token, so it cannot
+obscure or alter the action path.
+
 When one endpoint returns more than one kind of record, shape each variant
 deliberately. A compaction routine written for the common record will silently
 drop the fields that distinguish the others, and those are frequently the exact

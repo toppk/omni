@@ -14,6 +14,7 @@ import (
 
 	"github.com/toppk/omni/internal/command"
 	"github.com/toppk/omni/internal/config"
+	"github.com/toppk/omni/internal/output"
 )
 
 const defaultBaseURL = "https://api.trello.com/1"
@@ -86,6 +87,10 @@ func (c *Client) requestWithQuery(method, endpoint string, query map[string]stri
 // Execute maps only reviewed leaf commands to fixed Trello API requests.
 // There is intentionally no arbitrary method/path command.
 func Execute(d command.Definition, args []string, creds config.TrelloCredentials, settings config.TrelloSettings, out io.Writer) error {
+	return ExecuteWithFormat(d, args, creds, settings, output.JSON, out)
+}
+
+func ExecuteWithFormat(d command.Definition, args []string, creds config.TrelloCredentials, settings config.TrelloSettings, format output.Format, out io.Writer) error {
 	c := makeClient(creds)
 	c.baseURL = strings.TrimRight(settings.APIURL, "/")
 	var result any
@@ -785,7 +790,7 @@ func Execute(d command.Definition, args []string, creds config.TrelloCredentials
 	default:
 		return fmt.Errorf("%s is registered but not implemented yet", d.Name())
 	}
-	return json.NewEncoder(out).Encode(result)
+	return output.Encode(out, format, result)
 }
 
 // moveCard rejects archived cards before sending Trello a mutation. They must

@@ -9,6 +9,7 @@ import (
 
 	"github.com/toppk/omni/internal/command"
 	"github.com/toppk/omni/internal/config"
+	"github.com/toppk/omni/internal/output"
 )
 
 func TestSetupTrelloShowsSingleConfigurationCommand(t *testing.T) {
@@ -182,8 +183,33 @@ func TestDescribeOverviewListsServiceDiscovery(t *testing.T) {
 
 func TestDescribeJSONNearMissNamesTheSupportedFormat(t *testing.T) {
 	err := Run(context.Background(), []string{"describe", "trello", "--json"}, &bytes.Buffer{}, &bytes.Buffer{})
-	if err == nil || err.Error() != "use --format=json" {
+	if err == nil || err.Error() != "use --format json" {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestOperationOutputAcceptsFormatAfterEffect(t *testing.T) {
+	t.Setenv("OMNI_OUTPUT", "text")
+	args, format, err := operationOutput([]string{"observe", "--format", "json", "trello", "board", "list"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if format != output.JSON {
+		t.Fatalf("format = %q", format)
+	}
+	if got, want := strings.Join(args, " "), "observe trello board list"; got != want {
+		t.Fatalf("args = %q, want %q", got, want)
+	}
+}
+
+func TestOperationOutputUsesEnvironmentDefault(t *testing.T) {
+	t.Setenv("OMNI_OUTPUT", "json")
+	_, format, err := operationOutput([]string{"observe", "trello", "board", "list"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if format != output.JSON {
+		t.Fatalf("format = %q", format)
 	}
 }
 

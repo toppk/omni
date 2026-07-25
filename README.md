@@ -78,9 +78,26 @@ curl -fsSL https://toppk.github.io/omni/install.sh | sh
 
 The script detects the supported operating system and architecture, downloads the matching asset, verifies its release checksum, and installs it to `~/.local/bin`. It reports whether it installed, upgraded, or found the same version already installed; it never replaces an identical version. It warns if `~/.local/bin` is not on `PATH`, but does not change shell configuration. It refuses to overwrite a binary that does not identify as an Omni release, or conflict with another `omni` command on `PATH`. Set `OMNI_INSTALL_DIR` to choose another destination. Read the script before piping it to your shell, or download the binary and checksum directly from [GitHub Releases](https://github.com/toppk/omni/releases/latest).
 
+## Output
+
+Service commands render compact text for people by default. Request the
+canonical machine-readable response with `--format json`; the presentation flag
+may appear anywhere after the effect, though examples keep it at the end:
+
+```bash
+omni observe trello board list
+omni observe trello board list --format json
+OMNI_OUTPUT=json omni observe trello board list
+```
+
+`OMNI_OUTPUT` accepts `text` or `json` and sets the default for a process. An
+explicit `--format text|json` overrides it. JSON remains the stable contract
+for agents and scripts; text is rendered from the same compact response.
+
 ## Trello commands
 
-After adding a Trello API key and token, commands return JSON suitable for people, shell tools, and agents:
+After adding a Trello API key and token, commands return compact records for
+people, shell tools, and agents:
 
 ```bash
 omni observe trello board list
