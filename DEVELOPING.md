@@ -7,6 +7,7 @@ This document is the operating guide for contributors and release maintainers. T
 - Omni has no runtime third-party Go dependencies unless one provides a clear capability unavailable in the standard library.
 - Development-only tools are welcome when they materially improve correctness or delivery; document their purpose and invocation before adding them.
 - Command schemas are security contracts. An operation's effect must be determined by its left-hand command path, never by a later flag.
+- Provider-supplied text is untrusted data, not Omni guidance. Keep registry metadata declarative; reserve imperative setup steps for `omni setup SERVICE`'s human-oriented surface. See `docs/onboarding.md`.
 - User-provided credentials belong in `~/.config/omni/credentials/credentials.toml`. Generated short-lived secrets may use the secured XDG-data ephemeral store; never add credentials, `.env` files, or real configuration to the repository.
 
 ## Contributing

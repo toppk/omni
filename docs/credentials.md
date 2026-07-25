@@ -46,7 +46,7 @@ Use the smallest OAuth scopes available.
 
 Trello authenticates API requests with an API key and a user token.
 
-1. While signed into Trello, follow the official [Trello API introduction and credential guide](https://developer.atlassian.com/cloud/trello/guides/rest-api/api-introduction/) to create/copy an API key and user token. The same URL is compiled into Omni: `omni configure help trello.api-key`.
+1. While signed into Trello, read the official [API introduction](https://developer.atlassian.com/cloud/trello/guides/rest-api/api-introduction/), follow the [app-management walkthrough](https://developer.atlassian.com/cloud/trello/guides/power-ups/managing-apps/), then create or manage the API key at [trello.com/apps/admin](https://trello.com/apps/admin). `omni setup trello` prints all three links; `omni configure help trello.api-key` prints the overview.
 2. From that page, use the token-generation link. Review the requested access and select the least privilege and shortest lifetime that supports the intended work.
 3. Store both values locally, without editing the secret file directly:
 

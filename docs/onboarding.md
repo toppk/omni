@@ -44,6 +44,22 @@ Document arguments, options, response shape, and credential requirement in the
 command registry. Human discovery should read like a compact manual; JSON
 discovery can carry stable metadata for agents.
 
+Write each required `Summary` as the short, standalone action line that belongs
+in a manual's NAME section. It should say what the command does, not repeat the
+syntax, arguments, options, or response that the registry already presents.
+`Notes` are an optional list of independent facts that cannot be inferred from
+those fields: a safety condition, prerequisite, partial-success behavior, or
+non-obvious provider behavior. Do not add a note merely to restate the summary
+in different words.
+
+MCP uses one standalone tool `description`, rather than Omni's separate
+summary and optional notes. Generate that description from the full Omni
+contract: summary, syntax, arguments, options, response, credentials, effect,
+and recovery metadata, with Notes appended only when present. This preserves
+the compact human manual while giving an eventual MCP adapter the complete
+standalone explanation it needs. Omni's effect, unattended, and reversal data
+are deliberately additional safety metadata beyond MCP's basic tool model.
+
 Treat that registry as executable, agent-facing contract data rather than
 descriptive prose. Add tests for every safety claim it carries. In particular,
 unattended-safe commands must remain observation-only or otherwise fail closed,
@@ -52,6 +68,27 @@ If the implementation lacks an unarchive, undo, or restore operation, do not
 advertise reversibility merely because the remote provider happens to retain an
 object. These checks prevent metadata from drifting into promises an agent may
 reasonably trust.
+
+## Keep instructions and external content separate
+
+Provider records are untrusted content even when Omni fetched them successfully.
+Card names, descriptions, comments, labels, and similar fields may contain text
+that looks like instructions; present them as compact provider data, never as
+directions from Omni. This is a design consideration rather than a substitute
+for client-side prompt-injection defenses.
+
+The registry is trusted Omni-authored contract data, but write it
+declaratively. Summaries, argument descriptions, responses, reversals, and
+Notes should state semantics, safety conditions, prerequisites, and recovery
+facts—not tell an agent what plan to adopt or which unrelated command to run.
+`omni setup SERVICE` is a deliberately human-oriented onboarding surface and
+may provide ordered setup steps; keep that guidance separate from discovery and
+operation results.
+
+When adding a result envelope or an eventual MCP adapter, preserve provenance
+where practical: distinguish Omni status and identifiers from provider-supplied
+text. Continue evaluating this boundary as clients and services evolve rather
+than treating this guidance as a complete mitigation.
 
 The same discipline applies to option descriptions. An option that forwards a
 provider parameter must describe what that parameter actually does, verified
@@ -136,6 +173,19 @@ Use standard-library HTTP and in-memory transports for tests. Cover request
 method/path/body/authentication, credential redaction, compact output, option
 parsing, and local file permissions.
 
+For every response field named by a command's registry contract, use a
+provider-shaped recorded fixture to assert that the request asks for the field
+when necessary and that the encoder emits it. Do not test a compactor in
+isolation while assuming the upstream endpoint includes optional nested data:
+the query parameter that requests that data is part of the command contract.
+
+Finish a service slice with a small, real decision-oriented exercise. Ask the
+questions an agent or operator will actually ask, then check that the compact
+response exposes the signals needed to answer them—not merely fields that are
+technically correct. This is how a checklist-progress metric, an attachment
+count, or an identity needed for the next command becomes an intentional part
+of the contract rather than unnoticed provider noise.
+
 Run the normal local loop before a commit:
 
 ```bash
@@ -163,3 +213,8 @@ When a mutation must be proven against a live provider, look for an input whose
 success and failure are equally harmless—replaying an object's current contents,
 or supplying a stale version guard—so that the observable difference is the
 status code rather than a change to the caller's state.
+
+Before calling an unverified batch complete, run its read-only surface and its
+harmless-input mutations against the live service. This short manual pass is a
+separate check from local tests: it catches provider behavior, optional fields,
+and response shapes that fixtures and implementation tests can only model.

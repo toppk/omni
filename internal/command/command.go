@@ -35,6 +35,7 @@ type Argument struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Optional    bool   `json:"optional"`
+	Variadic    bool   `json:"variadic,omitempty"`
 }
 
 type Option struct {
@@ -50,7 +51,7 @@ type Definition struct {
 	Effect       Effect      `json:"effect"`
 	Path         []string    `json:"path"`
 	Summary      string      `json:"summary"`
-	Description  string      `json:"description"`
+	Notes        []string    `json:"notes,omitempty"`
 	Response     string      `json:"response_description"`
 	Arguments    []Argument  `json:"arguments"`
 	Options      []Option    `json:"options"`
@@ -75,8 +76,13 @@ func (d Definition) Validate() error {
 	if d.Summary == "" {
 		return fmt.Errorf("command %q needs a summary", d.Name())
 	}
-	if d.Description == "" || d.Response == "" {
-		return fmt.Errorf("command %q needs descriptions", d.Name())
+	if d.Response == "" {
+		return fmt.Errorf("command %q needs a response description", d.Name())
+	}
+	for _, note := range d.Notes {
+		if strings.TrimSpace(note) == "" {
+			return fmt.Errorf("command %q has an empty note", d.Name())
+		}
 	}
 	if d.UnattendedOK && d.Effect != Observe {
 		return fmt.Errorf("unattended command %q must be observe", d.Name())

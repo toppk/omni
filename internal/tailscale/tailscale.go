@@ -248,7 +248,7 @@ func (c *Client) execute(d command.Definition, args []string, out io.Writer) err
 		}
 		data, err := os.ReadFile(args[0])
 		if err != nil {
-			return fmt.Errorf("read policy file: %w", err)
+			return fmt.Errorf("read ACL file: %w", err)
 		}
 		data, _, err = c.request(http.MethodPost, c.tailnetPath("/acl/validate"), "application/hujson", bytes.NewReader(data))
 		if err != nil {

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/toppk/omni/internal/command"
 	"github.com/toppk/omni/internal/config"
 )
 
@@ -19,8 +20,10 @@ func TestSetupTrelloShowsSingleConfigurationCommand(t *testing.T) {
 	if !strings.Contains(text, "omni configure trello --default-board BOARD_ID --api-key API_KEY --api-token API_TOKEN") {
 		t.Fatalf("unexpected setup output: %s", text)
 	}
-	if !strings.Contains(text, "developer.atlassian.com") {
-		t.Fatal("missing credential URL")
+	for _, url := range []string{"api-introduction", "managing-apps", "trello.com/apps/admin"} {
+		if !strings.Contains(text, url) {
+			t.Fatalf("missing setup URL %q: %s", url, text)
+		}
 	}
 }
 
@@ -131,6 +134,34 @@ func TestVersionAliases(t *testing.T) {
 	}
 }
 
+func TestRootHelpShowsServiceReadinessAndDiscovery(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	var out bytes.Buffer
+	if err := Run(context.Background(), nil, &out, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"trello     needs setup", "tailscale  needs setup", "omni describe trello", "omni configure --help"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("root help missing %q: %s", want, out.String())
+		}
+	}
+	if err := Run(context.Background(), []string{"configure", "trello", "--api-key", "key", "--api-token", "token"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Run(context.Background(), []string{"configure", "tailscale", "--api-key", "key"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := Run(context.Background(), nil, &out, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"trello     configured", "tailscale  configured"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("root help missing %q: %s", want, out.String())
+		}
+	}
+}
+
 func TestDescribeOverviewListsServiceDiscovery(t *testing.T) {
 	var out bytes.Buffer
 	if err := Run(context.Background(), []string{"describe"}, &out, &bytes.Buffer{}); err != nil {
@@ -143,6 +174,13 @@ func TestDescribeOverviewListsServiceDiscovery(t *testing.T) {
 	}
 }
 
+func TestDescribeJSONNearMissNamesTheSupportedFormat(t *testing.T) {
+	err := Run(context.Background(), []string{"describe", "trello", "--json"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil || err.Error() != "use --format=json" {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestDescribeTrelloJSONIncludesOperationMetadata(t *testing.T) {
 	var out bytes.Buffer
 	if err := Run(context.Background(), []string{"describe", "trello", "--format=json"}, &out, &bytes.Buffer{}); err != nil {
@@ -151,9 +189,9 @@ func TestDescribeTrelloJSONIncludesOperationMetadata(t *testing.T) {
 	var result struct {
 		Service    string `json:"service"`
 		Operations []struct {
-			OperationID string `json:"operation_id"`
-			Description string `json:"description"`
-			Response    string `json:"response_description"`
+			OperationID string   `json:"operation_id"`
+			Notes       []string `json:"notes"`
+			Response    string   `json:"response_description"`
 		} `json:"operations"`
 	}
 	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
@@ -163,8 +201,33 @@ func TestDescribeTrelloJSONIncludesOperationMetadata(t *testing.T) {
 		t.Fatalf("unexpected catalog: %#v", result)
 	}
 	first := result.Operations[0]
-	if first.OperationID != "omni.observe.trello.board.list" || first.Description == "" || first.Response == "" {
+	if first.OperationID != "omni.observe.trello.board.list" || len(first.Notes) != 0 || first.Response == "" {
 		t.Fatalf("incomplete operation metadata: %#v", first)
+	}
+}
+
+func TestCommandManualOmitsEmptyNotes(t *testing.T) {
+	var out bytes.Buffer
+	if err := Run(context.Background(), []string{"describe", "observe", "tailscale", "user", "get"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "NOTES") {
+		t.Fatalf("empty notes should not create a manual section: %s", out.String())
+	}
+}
+
+func TestSynopsisShowsVariadicArguments(t *testing.T) {
+	for _, tokens := range [][]string{
+		{"observe", "trello", "card", "get-many"},
+		{"update", "trello", "card", "member", "add-many"},
+	} {
+		d, err := command.Find(tokens)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(synopsis(d), "...") {
+			t.Fatalf("variadic command has singular synopsis: %s", synopsis(d))
+		}
 	}
 }
 

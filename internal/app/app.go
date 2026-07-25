@@ -22,24 +22,20 @@ var Version = "dev"
 const usage = `Omni is a safety-oriented CLI for service APIs.
 
 Usage:
+  omni describe [SERVICE] [--format json]
+  omni describe <effect> <service> <resource> <verb>
   omni setup SERVICE
   omni configure SERVICE [OPTIONS]
-  omni configure describe
-  omni configure set SECTION.KEY VALUE
-  omni configure delete SECTION.KEY
-  omni configure secret set SECTION.KEY VALUE
-  omni configure secret delete SECTION.KEY
-  omni version
-  omni describe [<effect> <service> <resource> <verb>] [--format json]
-  omni policy explain <effect> <service> <resource> <verb>
   omni [--policy MODE] <effect> <service> <resource> <verb>
 
 The effect is always the first token after "omni": observe, create, update,
 move, archive, delete, execute, transfer, authorize, or administer.
 Arguments and flags may identify resources or format output, but may not change
-an operation's effect. Use "omni describe --format json" for the registry.
+an operation's effect.
 
-Run "omni setup SERVICE" for service-specific credentials and configuration.
+Use "omni describe" to discover services and their operations. Use
+"omni configure --help" for low-level registry commands, or "omni version"
+for the installed version.
 `
 
 const trelloConfigUsage = `Trello configuration
@@ -85,8 +81,7 @@ func Run(_ context.Context, args []string, out, errOut io.Writer) error {
 		return err
 	}
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
-		_, err := fmt.Fprint(out, usage)
-		return err
+		return rootHelp(out)
 	}
 	if len(args) >= 2 && args[0] != "configure" && args[0] != "setup" && (args[len(args)-1] == "--help" || args[len(args)-1] == "-h") {
 		return contextualHelp(args[:len(args)-1], out)
@@ -150,6 +145,28 @@ func Run(_ context.Context, args []string, out, errOut io.Writer) error {
 		return tailscale.Execute(d, operands, credentials, settings, ephemeral.Credentials, out)
 	}
 	return fmt.Errorf("%s is registered but not implemented yet", d.Name())
+}
+
+func rootHelp(out io.Writer) error {
+	if _, err := fmt.Fprint(out, usage); err != nil {
+		return err
+	}
+	paths, err := config.DefaultPaths()
+	if err != nil {
+		return err
+	}
+	trelloStatus := "needs setup"
+	if _, err := config.LoadTrelloCredentials(paths.Credentials); err == nil {
+		trelloStatus = "configured"
+	}
+	tailscaleStatus := "needs setup"
+	tailscaleCredentials, credentialsErr := config.LoadTailscaleCredentials(paths.Credentials)
+	tailscaleSettings, settingsErr := config.LoadTailscaleSettings(paths.Settings)
+	if credentialsErr == nil && (tailscaleCredentials.APIKey != "" || (tailscaleCredentials.ClientSecret != "" && settingsErr == nil && tailscaleSettings.ClientID != "")) {
+		tailscaleStatus = "configured"
+	}
+	_, err = fmt.Fprintf(out, "\nServices:\n  trello     %-12s omni describe trello\n  tailscale  %-12s omni describe tailscale\n\nSet up a service with:  omni setup SERVICE\n", trelloStatus, tailscaleStatus)
+	return err
 }
 
 func contextualHelp(args []string, out io.Writer) error {
@@ -456,7 +473,7 @@ func setup(args []string, out io.Writer) error {
 		return fmt.Errorf("unknown service; available setup: tailscale, trello")
 	}
 	key, _ := config.Lookup("trello.api-key")
-	_, err := fmt.Fprintf(out, "Trello setup\n\n1. Get an API key and user token from:\n   %s\n\n2. Configure Omni in one command:\n   omni configure trello --default-board BOARD_ID --api-key API_KEY --api-token API_TOKEN\n\nThe board ID is optional; omit --default-board if you prefer to specify it per command.\n", key.SetupURL)
+	_, err := fmt.Fprintf(out, "Trello setup\n\n1. Read the API overview:\n   %s\n\n2. Follow Trello's app-management walkthrough to create an API key:\n   https://developer.atlassian.com/cloud/trello/guides/power-ups/managing-apps/\n\n3. Open the Trello app-management page directly:\n   https://trello.com/apps/admin\n\n4. Generate a user token from the API-key page, then configure Omni in one command:\n   omni configure trello --default-board BOARD_ID --api-key API_KEY --api-token API_TOKEN\n\nThe board ID is optional; omit --default-board if you prefer to specify it per command.\n", key.SetupURL)
 	return err
 }
 
@@ -466,7 +483,7 @@ func describe(args []string, out io.Writer) error {
 	for _, a := range args {
 		if a == "--format=json" {
 			jsonFormat = true
-		} else if a == "--format" {
+		} else if a == "--format" || a == "--json" {
 			return fmt.Errorf("use --format=json")
 		} else {
 			filtered = append(filtered, a)
@@ -496,7 +513,7 @@ type operationInfo struct {
 	Command             []string            `json:"command"`
 	Effect              command.Effect      `json:"effect"`
 	Summary             string              `json:"summary"`
-	Description         string              `json:"description"`
+	Notes               []string            `json:"notes,omitempty"`
 	ResponseDescription string              `json:"response_description"`
 	Cardinality         command.Cardinality `json:"cardinality"`
 	Reversible          bool                `json:"reversible"`
@@ -516,7 +533,7 @@ func operationInfoFor(d command.Definition) operationInfo {
 	if options == nil {
 		options = []command.Option{}
 	}
-	return operationInfo{OperationID: d.OperationID(), Command: d.Tokens(), Effect: d.Effect, Summary: d.Summary, Description: d.Description, ResponseDescription: d.Response, Cardinality: d.Cardinality, Reversible: d.Reversible, Reversal: d.Reversal, Credentials: d.Credentials, UnattendedOK: d.UnattendedOK, Arguments: arguments, Options: options}
+	return operationInfo{OperationID: d.OperationID(), Command: d.Tokens(), Effect: d.Effect, Summary: d.Summary, Notes: d.Notes, ResponseDescription: d.Response, Cardinality: d.Cardinality, Reversible: d.Reversible, Reversal: d.Reversal, Credentials: d.Credentials, UnattendedOK: d.UnattendedOK, Arguments: arguments, Options: options}
 }
 
 type serviceDescription struct {
@@ -585,8 +602,21 @@ func describeService(service string, jsonFormat bool, out io.Writer) error {
 
 func describeOperation(d command.Definition, out io.Writer) error {
 	title := strings.ToUpper(strings.Join(d.Tokens(), "-"))
-	if _, err := fmt.Fprintf(out, "%s(1)                         Omni Manual                        %s(1)\n\nNAME\n       omni-%s - %s\n\nSYNOPSIS\n       omni %s\n\nDESCRIPTION\n       %s\n\n", title, title, strings.Join(d.Tokens(), "-"), d.Summary, synopsis(d), d.Description); err != nil {
+	if _, err := fmt.Fprintf(out, "%s(1)                         Omni Manual                        %s(1)\n\nNAME\n       omni-%s - %s\n\nSYNOPSIS\n       omni %s\n\n", title, title, strings.Join(d.Tokens(), "-"), d.Summary, synopsis(d)); err != nil {
 		return err
+	}
+	if len(d.Notes) > 0 {
+		if _, err := fmt.Fprintln(out, "NOTES"); err != nil {
+			return err
+		}
+		for _, note := range d.Notes {
+			if _, err := fmt.Fprintf(out, "       %s\n", note); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprintln(out); err != nil {
+			return err
+		}
 	}
 	if err := writeArgumentsOptions(d, out); err != nil {
 		return err
@@ -599,8 +629,15 @@ func writeCommandDetails(d command.Definition, out io.Writer) error {
 	if _, err := fmt.Fprintf(out, "       omni %s\n           %s\n", synopsis(d), d.Summary); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(out, "           %s\n", d.Description); err != nil {
-		return err
+	if len(d.Notes) > 0 {
+		if _, err := fmt.Fprintln(out, "           Notes:"); err != nil {
+			return err
+		}
+		for _, note := range d.Notes {
+			if _, err := fmt.Fprintf(out, "               %s\n", note); err != nil {
+				return err
+			}
+		}
 	}
 	if len(d.Arguments) > 0 {
 		if _, err := fmt.Fprintln(out, "           Arguments:"); err != nil {
@@ -667,10 +704,14 @@ func writeArgumentsOptions(d command.Definition, out io.Writer) error {
 func synopsis(d command.Definition) string {
 	parts := append([]string{}, d.Tokens()...)
 	for _, arg := range d.Arguments {
+		value := arg.Name
+		if arg.Variadic {
+			value += "..."
+		}
 		if arg.Optional {
-			parts = append(parts, "["+arg.Name+"]")
+			parts = append(parts, "["+value+"]")
 		} else {
-			parts = append(parts, arg.Name)
+			parts = append(parts, value)
 		}
 	}
 	for _, option := range d.Options {

@@ -148,7 +148,7 @@ omni describe trello --format=json
 omni describe observe trello card get --format=json
 ```
 
-The service JSON includes stable `operation_id` values, action-first command tokens, effect metadata, summaries, descriptions, response descriptions, arguments, options, and credential requirements. This is intentionally shaped like MCP tool enumeration while remaining a local CLI contract; the default terminal view is a human-oriented service manual.
+The service JSON includes stable `operation_id` values, action-first command tokens, effect metadata, summaries, optional notes, response descriptions, arguments, options, and credential requirements. This is intentionally shaped like MCP tool enumeration while remaining a local CLI contract; an eventual MCP adapter can synthesize its standalone tool description from the same fields, while the default terminal view is a human-oriented service manual.
 
 ## Developing
 

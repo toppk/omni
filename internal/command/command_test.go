@@ -23,7 +23,7 @@ func TestRegistrySafetyContractInvariants(t *testing.T) {
 }
 
 func TestDefinitionRejectsUnsafeContractClaims(t *testing.T) {
-	base := Definition{Effect: Update, Path: []string{"test", "thing"}, Summary: "Test.", Description: "Test command.", Response: "Test result."}
+	base := Definition{Effect: Update, Path: []string{"test", "thing"}, Summary: "Test.", Response: "Test result."}
 	unsafe := base
 	unsafe.UnattendedOK = true
 	if err := unsafe.Validate(); err == nil {
@@ -38,5 +38,10 @@ func TestDefinitionRejectsUnsafeContractClaims(t *testing.T) {
 	incorrect.Reversal = "not applicable"
 	if err := incorrect.Validate(); err == nil {
 		t.Fatal("non-reversible command with reversal was accepted")
+	}
+	emptyNote := base
+	emptyNote.Notes = []string{""}
+	if err := emptyNote.Validate(); err == nil {
+		t.Fatal("empty note was accepted")
 	}
 }
