@@ -476,7 +476,14 @@ func ExecuteWithFormat(d command.Definition, args []string, creds config.TrelloC
 		if fields["name"] == "" {
 			return fmt.Errorf("%s requires --name NAME", d.Name())
 		}
-		if err := c.requireOpenList(args[0]); err != nil {
+		boardID, err := c.openListBoard(args[0])
+		if err != nil {
+			return err
+		}
+		if boardID == "" && (len(labels) > 0 || len(members) > 0) {
+			return fmt.Errorf("Trello list %s did not include its board ID for label or member validation", args[0])
+		}
+		if err := c.validateCardAssignments(boardID, labels, members); err != nil {
 			return err
 		}
 		payload := map[string]string{"idList": args[0], "name": fields["name"]}
@@ -1006,12 +1013,56 @@ func (c *Client) requireOpenCard(cardID string) error {
 }
 
 func (c *Client) requireOpenList(listID string) error {
+	_, err := c.openListBoard(listID)
+	return err
+}
+
+func (c *Client) openListBoard(listID string) (string, error) {
 	var list map[string]any
 	if err := c.request(http.MethodGet, "/lists/"+url.PathEscape(listID), nil, &list); err != nil {
-		return err
+		return "", err
 	}
 	if closed, _ := list["closed"].(bool); closed {
-		return fmt.Errorf("cannot change archived Trello list %s; unarchive it first", listID)
+		return "", fmt.Errorf("cannot change archived Trello list %s; unarchive it first", listID)
+	}
+	boardID, _ := list["idBoard"].(string)
+	return boardID, nil
+}
+
+func (c *Client) validateCardAssignments(boardID string, labels, members []string) error {
+	if len(labels) > 0 {
+		var records []map[string]any
+		if err := c.request(http.MethodGet, "/boards/"+url.PathEscape(boardID)+"/labels", nil, &records); err != nil {
+			return err
+		}
+		known := map[string]bool{}
+		for _, record := range records {
+			if id, _ := record["id"].(string); id != "" {
+				known[id] = true
+			}
+		}
+		for _, id := range labels {
+			if !known[id] {
+				return fmt.Errorf("Trello label %s is not on board %s", id, boardID)
+			}
+		}
+	}
+	if len(members) > 0 {
+		var records []map[string]any
+		if err := c.request(http.MethodGet, "/boards/"+url.PathEscape(boardID)+"/members", nil, &records); err != nil {
+			return err
+		}
+		known := map[string]bool{}
+		for _, record := range records {
+			if id, _ := record["id"].(string); id != "" {
+				known[id] = true
+			}
+		}
+		for _, id := range members {
+			if !known[id] {
+				return fmt.Errorf("Trello member %s is not on board %s", id, boardID)
+			}
+		}
 	}
 	return nil
 }
