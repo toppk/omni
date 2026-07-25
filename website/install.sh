@@ -65,6 +65,11 @@ else
   fi
 fi
 
+if [ "$previous_version" = "$next_version" ]; then
+  echo "Already installed: $next_version at $target"
+  exit 0
+fi
+
 if [ "$previous_version" = "not installed" ]; then
   echo "Installing: not installed → $next_version"
 else
