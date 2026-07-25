@@ -116,6 +116,9 @@ func (r textRenderer) list(values []any, indent string) error {
 		}
 		objects[i] = object
 	}
+	if cardRecords(objects) {
+		return r.cards(objects, indent)
+	}
 	columns := listColumns(objects)
 	writer := tabwriter.NewWriter(r.w, 0, 4, 2, ' ', 0)
 	if _, err := fmt.Fprintln(writer, strings.Join(upper(columns), "\t")); err != nil {
@@ -131,6 +134,77 @@ func (r textRenderer) list(values []any, indent string) error {
 		}
 	}
 	return writer.Flush()
+}
+
+func (r textRenderer) cards(cards []map[string]any, indent string) error {
+	columns := []string{"NAME", "PROGRESS", "LABELS", "MEMBERS", "DUE"}
+	if anyCardHasList(cards) {
+		columns = append(columns, "LIST")
+	}
+	writer := tabwriter.NewWriter(r.w, 0, 4, 2, ' ', 0)
+	if _, err := fmt.Fprintln(writer, indent+strings.Join(columns, "\t")); err != nil {
+		return err
+	}
+	for _, card := range cards {
+		row := []string{scalar(card["name"]), cardProgress(card), cardLabels(card), memberSummary(card), scalar(card["due"])}
+		if len(columns) == 6 {
+			list, _ := card["list"].(map[string]any)
+			row = append(row, scalar(list["name"]))
+		}
+		if _, err := fmt.Fprintln(writer, indent+strings.Join(row, "\t")); err != nil {
+			return err
+		}
+	}
+	return writer.Flush()
+}
+
+func cardRecords(records []map[string]any) bool {
+	return len(records) > 0 && records[0]["id"] != nil && records[0]["name"] != nil && records[0]["idList"] != nil
+}
+
+func anyCardHasList(cards []map[string]any) bool {
+	for _, card := range cards {
+		if _, ok := card["list"].(map[string]any); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func cardProgress(card map[string]any) string {
+	badges, _ := card["badges"].(map[string]any)
+	total, _ := badges["checkItems"].(float64)
+	done, _ := badges["checkItemsChecked"].(float64)
+	if total == 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%.0f/%.0f", done, total)
+}
+
+func cardLabels(card map[string]any) string {
+	labels, _ := card["labels"].([]any)
+	names := make([]string, 0, len(labels))
+	for _, value := range labels {
+		if label, ok := value.(map[string]any); ok {
+			if name := scalar(label["name"]); name != "" {
+				names = append(names, name)
+			} else if color := scalar(label["color"]); color != "" {
+				names = append(names, color)
+			}
+		}
+	}
+	if len(names) == 0 {
+		return "-"
+	}
+	return strings.Join(names, ", ")
+}
+
+func memberSummary(card map[string]any) string {
+	members, _ := card["idMembers"].([]any)
+	if len(members) == 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%d assigned", len(members))
 }
 
 func listColumns(objects []map[string]any) []string {
