@@ -33,6 +33,16 @@ omni configure trello --default-board BOARD_ID --api-key API_KEY --api-token API
 `trello.default-board-id` is optional. `trello.api-url` defaults to the public
 API endpoint and may be overridden for a compatible mock server.
 
+If you do not know the board ID, configure the API key and token first without
+`--default-board`, then list the boards visible to that Trello user:
+
+```bash
+omni observe trello board list
+# Optional concise ID and name view when jq is available:
+omni observe trello board list | jq -r '.boards[] | "\(.id)\t\(.name)"'
+omni configure set trello.default-board-id BOARD_ID
+```
+
 ## Output and archive safety
 
 Board overview returns board identity, description, short URL, and each list's

@@ -33,8 +33,14 @@ func TestConfigureTrelloHelpDoesNotInitializeFiles(t *testing.T) {
 	if err := Run(context.Background(), []string{"configure", "trello", "--help"}, &out, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "--api-token") {
-		t.Fatal("missing Trello options")
+	for _, want := range []string{
+		"--api-token",
+		"omni observe trello board list",
+		"omni configure set trello.default-board-id BOARD_ID",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("missing %q from Trello configuration help", want)
+		}
 	}
 }
 
