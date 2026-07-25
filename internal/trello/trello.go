@@ -177,11 +177,12 @@ func (c *Client) downloadAttachment(cardID, attachmentID, output string) (map[st
 	if err != nil || (u.Host != "trello.com" && !strings.HasSuffix(u.Host, ".trello.com")) {
 		return nil, fmt.Errorf("attachment %s does not have a Trello-hosted download URL", attachmentID)
 	}
-	q := u.Query()
-	q.Set("key", c.creds.APIKey)
-	q.Set("token", c.creds.Token)
-	u.RawQuery = q.Encode()
-	resp, err := c.http.Get(u.String())
+	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", fmt.Sprintf("OAuth oauth_consumer_key=%q, oauth_token=%q", c.creds.APIKey, c.creds.Token))
+	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("Trello attachment download failed: network error")
 	}

@@ -6,6 +6,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -233,6 +235,40 @@ func TestAttachmentListRendersTextWhenRequested(t *testing.T) {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("text output missing %q:\n%s", want, out.String())
 		}
+	}
+}
+
+func TestDownloadAttachmentUsesOAuthHeaderWithoutQueryCredentials(t *testing.T) {
+	output := filepath.Join(t.TempDir(), "image.png")
+	c := NewClient(config.TrelloCredentials{APIKey: "key-value", Token: "token-value"})
+	c.baseURL = "https://example.test"
+	c.http = &http.Client{Transport: roundTripper(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Host {
+		case "example.test":
+			return jsonResponse(r, `[{"id":"attachment-1","isUpload":true,"url":"https://trello.com/download/image.png","mimeType":"image/png"}]`), nil
+		case "trello.com":
+			if got, want := r.Header.Get("Authorization"), `OAuth oauth_consumer_key="key-value", oauth_token="token-value"`; got != want {
+				t.Fatalf("authorization = %q, want %q", got, want)
+			}
+			if r.URL.RawQuery != "" {
+				t.Fatalf("download URL has query %q", r.URL.RawQuery)
+			}
+			return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Body: io.NopCloser(strings.NewReader("image")), Header: make(http.Header)}, nil
+		default:
+			t.Fatalf("host = %s", r.URL.Host)
+			return nil, nil
+		}
+	})}
+	result, err := c.downloadAttachment("card-1", "attachment-1", output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result["bytes"] != 5 {
+		t.Fatalf("result = %#v", result)
+	}
+	data, err := os.ReadFile(output)
+	if err != nil || string(data) != "image" {
+		t.Fatalf("file = %q, err = %v", data, err)
 	}
 }
 
