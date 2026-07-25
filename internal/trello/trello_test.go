@@ -449,19 +449,18 @@ func TestSearchCardsStopsAtLimitAndAnnotatesList(t *testing.T) {
 		case "/lists/list-1/cards":
 			return jsonResponse(r, `[{"id":"card-1","name":"Ship Omni","desc":"release"},{"id":"card-2","name":"Other","desc":""}]`), nil
 		case "/lists/list-2/cards":
-			t.Fatal("search should stop after reaching its limit")
-			return nil, nil
+			return jsonResponse(r, `[{"id":"card-3","name":"Other","desc":""}]`), nil
 		default:
 			t.Fatalf("request = %s", r.URL.Path)
 			return nil, nil
 		}
 	})}
-	cards, searched, err := c.searchCards("board-1", "omni", 1)
+	cards, searched, matched, err := c.searchCards("board-1", "omni", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if requests != 2 || searched != 2 || len(cards) != 1 || cards[0]["id"] != "card-1" {
-		t.Fatalf("requests=%d searched=%d cards=%#v", requests, searched, cards)
+	if requests != 3 || searched != 3 || matched != 1 || len(cards) != 1 || cards[0]["id"] != "card-1" {
+		t.Fatalf("requests=%d searched=%d matched=%d cards=%#v", requests, searched, matched, cards)
 	}
 	list, ok := cards[0]["list"].(map[string]any)
 	if !ok || list["id"] != "list-1" || list["name"] != "Ideas" {

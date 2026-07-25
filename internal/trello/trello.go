@@ -339,11 +339,11 @@ func ExecuteWithFormat(d command.Definition, args []string, creds config.TrelloC
 		if err != nil {
 			return err
 		}
-		cards, searched, err := c.searchCards(boardID, args[0], limit)
+		cards, searched, matched, err := c.searchCards(boardID, args[0], limit)
 		if err != nil {
 			return err
 		}
-		result = map[string]any{"cards": cards, "query": args[0], "searched": searched, "limit": limit}
+		result = map[string]any{"cards": cards, "query": args[0], "searched": searched, "matched": matched, "limit": limit, "truncated": matched > len(cards)}
 	case "observe trello checklist list":
 		if err := exact(args, 1, d.Name()); err != nil {
 			return err
@@ -1224,14 +1224,14 @@ func compactCardActions(actions []map[string]any) []map[string]any {
 	return compact
 }
 
-func (c *Client) searchCards(boardID, query string, limit int) ([]map[string]any, int, error) {
+func (c *Client) searchCards(boardID, query string, limit int) ([]map[string]any, int, int, error) {
 	needle := strings.ToLower(query)
 	labelID := ""
 	if strings.HasPrefix(needle, "label:") {
 		labelName := strings.TrimSpace(strings.TrimPrefix(needle, "label:"))
 		var labels []map[string]any
 		if err := c.request(http.MethodGet, "/boards/"+url.PathEscape(boardID)+"/labels", nil, &labels); err != nil {
-			return nil, 0, err
+			return nil, 0, 0, err
 		}
 		for _, label := range labels {
 			if name, _ := label["name"].(string); strings.EqualFold(name, labelName) {
@@ -1240,30 +1240,25 @@ func (c *Client) searchCards(boardID, query string, limit int) ([]map[string]any
 			}
 		}
 		if labelID == "" {
-			return []map[string]any{}, 0, nil
+			return nil, 0, 0, fmt.Errorf("Trello label %q is not on board %s", labelName, boardID)
 		}
 		needle = ""
 	}
 	var lists []map[string]any
 	if err := c.request(http.MethodGet, "/boards/"+url.PathEscape(boardID)+"/lists", nil, &lists); err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 	results := make([]map[string]any, 0, limit)
 	searched := 0
+	matched := 0
 	for _, list := range lists {
-		if len(results) >= limit {
-			break
-		}
 		listID, _ := list["id"].(string)
 		var cards []map[string]any
 		if err := c.request(http.MethodGet, "/lists/"+url.PathEscape(listID)+"/cards", nil, &cards); err != nil {
-			return nil, searched, err
+			return nil, searched, matched, err
 		}
 		searched += len(cards)
 		for _, card := range cards {
-			if len(results) >= limit {
-				break
-			}
 			name, _ := card["name"].(string)
 			description, _ := card["desc"].(string)
 			if labelID != "" && !hasLabel(card, labelID) {
@@ -1272,12 +1267,15 @@ func (c *Client) searchCards(boardID, query string, limit int) ([]map[string]any
 			if needle != "" && !strings.Contains(strings.ToLower(name+" "+description), needle) {
 				continue
 			}
-			entry := compactCard(card)
-			entry["list"] = compactList(list)
-			results = append(results, entry)
+			matched++
+			if len(results) < limit {
+				entry := compactCard(card)
+				entry["list"] = compactList(list)
+				results = append(results, entry)
+			}
 		}
 	}
-	return results, searched, nil
+	return results, searched, matched, nil
 }
 
 func hasLabel(card map[string]any, labelID string) bool {
