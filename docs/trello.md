@@ -58,8 +58,11 @@ The compact `badges` fields are workflow signals, not incidental provider
 noise: `checkItems` and `checkItemsChecked` are checklist progress,
 `attachments` tells a caller to run `observe trello attachment list CARD_ID`,
 and `dueComplete` is the current due-date completion state. Attachment listing
-returns compact metadata and the provider URL; Omni does not download, upload,
-or delete attachment contents in this surface.
+returns compact metadata and the provider URL. Download an uploaded attachment
+only to an explicit new file with `observe trello attachment download CARD_ID
+ATTACHMENT_ID --output FILE`; uploads and deletion use their distinct create
+and delete commands. Omni limits attachment transfer to 25 MiB and never
+writes attachment bytes to stdout.
 
 `move trello card move` and other card mutations refuse archived cards. Restore
 a card deliberately with `update trello card unarchive CARD_ID`; archive and

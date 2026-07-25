@@ -6,8 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +21,7 @@ import (
 )
 
 const defaultBaseURL = "https://api.trello.com/1"
+const maxAttachmentBytes = 25 << 20
 
 type Client struct {
 	baseURL string
@@ -82,6 +86,128 @@ func (c *Client) requestWithQuery(method, endpoint string, query map[string]stri
 		}
 	}
 	return nil
+}
+
+func (c *Client) uploadAttachment(cardID, file, name string) (map[string]any, error) {
+	if file == "" {
+		return nil, fmt.Errorf("create trello attachment upload requires --file FILE")
+	}
+	if err := c.requireOpenCard(cardID); err != nil {
+		return nil, err
+	}
+	info, err := os.Stat(file)
+	if err != nil {
+		return nil, fmt.Errorf("read attachment file: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("attachment file must be a regular file")
+	}
+	if info.Size() > maxAttachmentBytes {
+		return nil, fmt.Errorf("attachment file exceeds 25 MiB limit")
+	}
+	f, err := os.Open(file)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	var body bytes.Buffer
+	form := multipart.NewWriter(&body)
+	part, err := form.CreateFormFile("file", filepath.Base(file))
+	if err != nil {
+		return nil, err
+	}
+	if _, err := io.Copy(part, f); err != nil {
+		return nil, err
+	}
+	if name != "" {
+		_ = form.WriteField("name", name)
+	}
+	if err := form.Close(); err != nil {
+		return nil, err
+	}
+	u, _ := url.Parse(c.baseURL + "/cards/" + url.PathEscape(cardID) + "/attachments")
+	q := u.Query()
+	q.Set("key", c.creds.APIKey)
+	q.Set("token", c.creds.Token)
+	u.RawQuery = q.Encode()
+	req, err := http.NewRequest(http.MethodPost, u.String(), &body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", form.FormDataContentType())
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("Trello attachment upload failed: network error")
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("Trello attachment upload returned %s: %s", resp.Status, strings.TrimSpace(string(data)))
+	}
+	var result map[string]any
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("decode Trello response: %w", err)
+	}
+	return result, nil
+}
+
+func (c *Client) downloadAttachment(cardID, attachmentID, output string) (map[string]any, error) {
+	if output == "" {
+		return nil, fmt.Errorf("observe trello attachment download requires --output FILE")
+	}
+	var attachments []map[string]any
+	if err := c.request(http.MethodGet, "/cards/"+url.PathEscape(cardID)+"/attachments", nil, &attachments); err != nil {
+		return nil, err
+	}
+	var attachment map[string]any
+	for _, candidate := range attachments {
+		if candidate["id"] == attachmentID {
+			attachment = candidate
+			break
+		}
+	}
+	if attachment == nil || attachment["isUpload"] != true {
+		return nil, fmt.Errorf("attachment %s is not a downloadable Trello upload", attachmentID)
+	}
+	downloadURL, _ := attachment["url"].(string)
+	u, err := url.Parse(downloadURL)
+	if err != nil || (u.Host != "trello.com" && !strings.HasSuffix(u.Host, ".trello.com")) {
+		return nil, fmt.Errorf("attachment %s does not have a Trello-hosted download URL", attachmentID)
+	}
+	q := u.Query()
+	q.Set("key", c.creds.APIKey)
+	q.Set("token", c.creds.Token)
+	u.RawQuery = q.Encode()
+	resp, err := c.http.Get(u.String())
+	if err != nil {
+		return nil, fmt.Errorf("Trello attachment download failed: network error")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("Trello attachment download returned %s", resp.Status)
+	}
+	if resp.ContentLength > maxAttachmentBytes {
+		return nil, fmt.Errorf("attachment exceeds 25 MiB limit")
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxAttachmentBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxAttachmentBytes {
+		return nil, fmt.Errorf("attachment exceeds 25 MiB limit")
+	}
+	f, err := os.OpenFile(output, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return nil, fmt.Errorf("create attachment file: %w", err)
+	}
+	defer f.Close()
+	if _, err := f.Write(data); err != nil {
+		return nil, err
+	}
+	return map[string]any{"attachment_id": attachmentID, "card_id": cardID, "file": output, "bytes": len(data), "mime_type": attachment["mimeType"]}, nil
 }
 
 // Execute maps only reviewed leaf commands to fixed Trello API requests.
@@ -158,6 +284,15 @@ func ExecuteWithFormat(d command.Definition, args []string, creds config.TrelloC
 			return err
 		}
 		result = map[string]any{"card_id": args[0], "attachments": compactAttachments(attachments)}
+	case "observe trello attachment download":
+		if len(args) != 4 || args[2] != "--output" {
+			return fmt.Errorf("%s requires CARD_ID ATTACHMENT_ID --output FILE", d.Name())
+		}
+		downloaded, err := c.downloadAttachment(args[0], args[1], args[3])
+		if err != nil {
+			return err
+		}
+		result = downloaded
 	case "observe trello card get-many":
 		if len(args) < 1 || len(args) > 10 {
 			return fmt.Errorf("%s requires one to ten CARD_ID values", d.Name())
@@ -355,6 +490,19 @@ func ExecuteWithFormat(d command.Definition, args []string, creds config.TrelloC
 			return err
 		}
 		result = map[string]any{"card": compactCard(card)}
+	case "create trello attachment upload":
+		if len(args) < 3 {
+			return fmt.Errorf("%s requires CARD_ID --file FILE", d.Name())
+		}
+		fields, err := named(args[1:], "file", "name")
+		if err != nil {
+			return err
+		}
+		attachment, err := c.uploadAttachment(args[0], fields["file"], fields["name"])
+		if err != nil {
+			return err
+		}
+		result = map[string]any{"attachment": compactAttachments([]map[string]any{attachment})[0]}
 	case "create trello list create":
 		if len(args) < 2 {
 			return fmt.Errorf("%s requires BOARD_ID and --name NAME", d.Name())
@@ -755,6 +903,17 @@ func ExecuteWithFormat(d command.Definition, args []string, creds config.TrelloC
 			return err
 		}
 		result = map[string]string{"deleted_checklist_item_id": args[1]}
+	case "delete trello attachment delete":
+		if err := exact(args, 2, d.Name()); err != nil {
+			return err
+		}
+		if err := c.requireOpenCard(args[0]); err != nil {
+			return err
+		}
+		if err := c.request(http.MethodDelete, "/cards/"+url.PathEscape(args[0])+"/attachments/"+url.PathEscape(args[1]), nil, nil); err != nil {
+			return err
+		}
+		result = map[string]string{"card_id": args[0], "deleted_attachment_id": args[1]}
 	case "delete trello checklist delete":
 		if err := exact(args, 1, d.Name()); err != nil {
 			return err
