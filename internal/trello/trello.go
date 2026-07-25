@@ -1225,11 +1225,29 @@ func compactCardActions(actions []map[string]any) []map[string]any {
 }
 
 func (c *Client) searchCards(boardID, query string, limit int) ([]map[string]any, int, error) {
+	needle := strings.ToLower(query)
+	labelID := ""
+	if strings.HasPrefix(needle, "label:") {
+		labelName := strings.TrimSpace(strings.TrimPrefix(needle, "label:"))
+		var labels []map[string]any
+		if err := c.request(http.MethodGet, "/boards/"+url.PathEscape(boardID)+"/labels", nil, &labels); err != nil {
+			return nil, 0, err
+		}
+		for _, label := range labels {
+			if name, _ := label["name"].(string); strings.EqualFold(name, labelName) {
+				labelID, _ = label["id"].(string)
+				break
+			}
+		}
+		if labelID == "" {
+			return []map[string]any{}, 0, nil
+		}
+		needle = ""
+	}
 	var lists []map[string]any
 	if err := c.request(http.MethodGet, "/boards/"+url.PathEscape(boardID)+"/lists", nil, &lists); err != nil {
 		return nil, 0, err
 	}
-	needle := strings.ToLower(query)
 	results := make([]map[string]any, 0, limit)
 	searched := 0
 	for _, list := range lists {
@@ -1248,7 +1266,10 @@ func (c *Client) searchCards(boardID, query string, limit int) ([]map[string]any
 			}
 			name, _ := card["name"].(string)
 			description, _ := card["desc"].(string)
-			if !strings.Contains(strings.ToLower(name+" "+description), needle) {
+			if labelID != "" && !hasLabel(card, labelID) {
+				continue
+			}
+			if needle != "" && !strings.Contains(strings.ToLower(name+" "+description), needle) {
 				continue
 			}
 			entry := compactCard(card)
@@ -1257,6 +1278,18 @@ func (c *Client) searchCards(boardID, query string, limit int) ([]map[string]any
 		}
 	}
 	return results, searched, nil
+}
+
+func hasLabel(card map[string]any, labelID string) bool {
+	labels, _ := card["labels"].([]any)
+	for _, value := range labels {
+		if label, ok := value.(map[string]any); ok {
+			if id, _ := label["id"].(string); id == labelID {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func positiveInt(value string, fallback int, option string) (int, error) {
