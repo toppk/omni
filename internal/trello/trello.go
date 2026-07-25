@@ -468,7 +468,7 @@ func ExecuteWithFormat(d command.Definition, args []string, creds config.TrelloC
 		if len(args) < 2 {
 			return fmt.Errorf("%s requires LIST_ID and --name NAME", d.Name())
 		}
-		fields, err := named(args[1:], "name", "description", "due")
+		fields, labels, members, err := cardCreateOptions(args[1:])
 		if err != nil {
 			return err
 		}
@@ -484,6 +484,12 @@ func ExecuteWithFormat(d command.Definition, args []string, creds config.TrelloC
 		}
 		if fields["due"] != "" {
 			payload["due"] = fields["due"]
+		}
+		if len(labels) > 0 {
+			payload["idLabels"] = strings.Join(labels, ",")
+		}
+		if len(members) > 0 {
+			payload["idMembers"] = strings.Join(members, ",")
 		}
 		var card map[string]any
 		if err := c.request(http.MethodPost, "/cards", payload, &card); err != nil {
@@ -1270,4 +1276,30 @@ func named(args []string, allowed ...string) (map[string]string, error) {
 		args = args[2:]
 	}
 	return result, nil
+}
+
+func cardCreateOptions(args []string) (map[string]string, []string, []string, error) {
+	fields := map[string]string{}
+	var labels, members []string
+	for len(args) > 0 {
+		if len(args) < 2 || !strings.HasPrefix(args[0], "--") {
+			return nil, nil, nil, fmt.Errorf("expected --NAME VALUE")
+		}
+		key, value := strings.TrimPrefix(args[0], "--"), args[1]
+		switch key {
+		case "name", "description", "due":
+			if _, exists := fields[key]; exists {
+				return nil, nil, nil, fmt.Errorf("--%s specified more than once", key)
+			}
+			fields[key] = value
+		case "label":
+			labels = append(labels, value)
+		case "member":
+			members = append(members, value)
+		default:
+			return nil, nil, nil, fmt.Errorf("unsupported option --%s", key)
+		}
+		args = args[2:]
+	}
+	return fields, labels, members, nil
 }
