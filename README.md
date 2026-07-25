@@ -76,7 +76,7 @@ Linux (x86_64 and ARM64) and macOS (Intel and Apple Silicon) releases are distri
 curl -fsSL https://toppk.github.io/omni/install.sh | sh
 ```
 
-The script detects the supported operating system and architecture, downloads the matching asset, verifies its release checksum, reports the before/after version, and installs it to `~/.local/bin`. It refuses to overwrite a binary that does not identify as an Omni release, or conflict with another `omni` command on `PATH`. Set `OMNI_INSTALL_DIR` to choose another destination. Read the script before piping it to your shell, or download the binary and checksum directly from [GitHub Releases](https://github.com/toppk/omni/releases/latest).
+The script detects the supported operating system and architecture, downloads the matching asset, verifies its release checksum, and installs it to `~/.local/bin`. It reports whether it installed, upgraded, or found the same version already installed; it never replaces an identical version. It warns if `~/.local/bin` is not on `PATH`, but does not change shell configuration. It refuses to overwrite a binary that does not identify as an Omni release, or conflict with another `omni` command on `PATH`. Set `OMNI_INSTALL_DIR` to choose another destination. Read the script before piping it to your shell, or download the binary and checksum directly from [GitHub Releases](https://github.com/toppk/omni/releases/latest).
 
 ## Trello commands
 

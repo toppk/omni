@@ -119,7 +119,7 @@ chmod +x /tmp/omni-verify/omni_linux_amd64
 
 The static GitHub Pages source is under `website/`. [Deploy Pages](.github/workflows/pages.yml) deploys it when that directory or its workflow changes on `master`.
 
-The public installer is `https://toppk.github.io/omni/install.sh`. It downloads the latest release binary, fetches its release checksum, verifies SHA-256, and installs to `~/.local/bin` without `sudo`. It only replaces a target that identifies as an Omni release, rejects an unrelated `omni` already on `PATH`, and reports the before/after version.
+The public installer is `https://toppk.github.io/omni/install.sh`. It detects the supported Linux or macOS architecture, downloads the matching latest release binary, fetches its release checksum, verifies SHA-256, and installs to `~/.local/bin` without `sudo`. It only replaces a target that identifies as an Omni release, rejects an unrelated `omni` already on `PATH`, skips an identical installed version, and warns if `~/.local/bin` is not on `PATH` without modifying shell configuration.
 
 After changing the installer, run:
 
