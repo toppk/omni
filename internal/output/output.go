@@ -146,7 +146,7 @@ func (r textRenderer) cards(cards []map[string]any, indent string) error {
 		return err
 	}
 	for _, card := range cards {
-		row := []string{scalar(card["name"]), cardProgress(card), cardLabels(card), memberSummary(card), scalar(card["due"])}
+		row := []string{scalar(card["name"]), cardProgress(card), cardLabels(card), memberSummary(card), dueDate(card["due"])}
 		if len(columns) == 6 {
 			list, _ := card["list"].(map[string]any)
 			row = append(row, scalar(list["name"]))
@@ -200,11 +200,32 @@ func cardLabels(card map[string]any) string {
 }
 
 func memberSummary(card map[string]any) string {
+	if members, ok := card["members"].([]any); ok && len(members) > 0 {
+		initials := make([]string, 0, len(members))
+		for _, value := range members {
+			if member, ok := value.(map[string]any); ok {
+				if initial := scalar(member["initials"]); initial != "" {
+					initials = append(initials, initial)
+				}
+			}
+		}
+		if len(initials) > 0 {
+			return strings.Join(initials, ", ")
+		}
+	}
 	members, _ := card["idMembers"].([]any)
 	if len(members) == 0 {
 		return "-"
 	}
 	return fmt.Sprintf("%d assigned", len(members))
+}
+
+func dueDate(value any) string {
+	due := scalar(value)
+	if len(due) >= 10 {
+		return due[:10]
+	}
+	return due
 }
 
 func listColumns(objects []map[string]any) []string {

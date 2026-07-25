@@ -263,7 +263,7 @@ func ExecuteWithFormat(d command.Definition, args []string, creds config.TrelloC
 			return err
 		}
 		var cards []map[string]any
-		if err := c.request(http.MethodGet, "/lists/"+url.PathEscape(args[0])+"/cards", nil, &cards); err != nil {
+		if err := c.requestWithQuery(http.MethodGet, "/lists/"+url.PathEscape(args[0])+"/cards", map[string]string{"members": "true", "member_fields": "initials,username"}, nil, &cards); err != nil {
 			return err
 		}
 		result = map[string]any{"cards": compactCards(cards)}
@@ -417,7 +417,7 @@ func ExecuteWithFormat(d command.Definition, args []string, creds config.TrelloC
 			return err
 		}
 		var cards []map[string]any
-		if err := c.request(http.MethodGet, "/lists/"+url.PathEscape(args[0])+"/cards", nil, &cards); err != nil {
+		if err := c.requestWithQuery(http.MethodGet, "/lists/"+url.PathEscape(args[0])+"/cards", map[string]string{"members": "true", "member_fields": "initials,username"}, nil, &cards); err != nil {
 			return err
 		}
 		result = map[string]any{"list": compactList(list), "cards": compactCards(cards)}
@@ -1094,7 +1094,7 @@ func compactBoard(board map[string]any) map[string]any {
 func compactCard(card map[string]any) map[string]any {
 	compact := selectFields(card,
 		"id", "name", "idList", "desc", "due", "dateLastActivity",
-		"labels", "idMembers", "closed", "pos", "shortUrl", "idChecklists",
+		"labels", "idMembers", "members", "closed", "pos", "shortUrl", "idChecklists",
 	)
 	if badges, ok := card["badges"].(map[string]any); ok {
 		compact["badges"] = selectFields(badges,
@@ -1254,7 +1254,7 @@ func (c *Client) searchCards(boardID, query string, limit int) ([]map[string]any
 	for _, list := range lists {
 		listID, _ := list["id"].(string)
 		var cards []map[string]any
-		if err := c.request(http.MethodGet, "/lists/"+url.PathEscape(listID)+"/cards", nil, &cards); err != nil {
+		if err := c.requestWithQuery(http.MethodGet, "/lists/"+url.PathEscape(listID)+"/cards", map[string]string{"members": "true", "member_fields": "initials,username"}, nil, &cards); err != nil {
 			return nil, searched, matched, err
 		}
 		searched += len(cards)
