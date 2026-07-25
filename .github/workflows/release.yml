@@ -15,41 +15,47 @@ permissions:
   contents: write
 
 jobs:
-  release-linux-amd64:
-    name: Release Linux x86_64 binary
+  release-binaries:
+    name: Release binaries
     runs-on: ubuntu-latest
     env:
       CGO_ENABLED: "0"
-      GOOS: linux
-      GOARCH: amd64
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: "1.26.x"
+          # Omni deliberately has no external Go modules or go.sum file.
+          cache: false
 
       - name: Test and vet
         run: |
           go test ./...
           go vet ./...
 
-      - name: Build release binary
+      - name: Build release binaries
         id: build
         shell: bash
         run: |
           tag="${{ github.event.inputs.tag || github.ref_name }}"
           version="${tag#v}"
-          asset="omni_linux_amd64"
           mkdir -p dist
-          go build -trimpath -ldflags="-s -w -X github.com/toppk/omni/internal/app.Version=$tag" -o dist/"$asset" ./cmd/omni
-          (
-            cd dist
-            sha256sum "$asset" > "$asset".sha256
-          )
-          printf 'tag=%s\nversion=%s\nasset=%s\n' "$tag" "$version" "$asset" >> "$GITHUB_OUTPUT"
+          while read -r goos goarch; do
+            asset="omni_${goos}_${goarch}"
+            GOOS="$goos" GOARCH="$goarch" go build -trimpath \
+              -ldflags="-s -w -X github.com/toppk/omni/internal/app.Version=$tag" \
+              -o "dist/$asset" ./cmd/omni
+            sha256sum "dist/$asset" > "dist/$asset.sha256"
+          done <<'TARGETS'
+          linux amd64
+          linux arm64
+          darwin amd64
+          darwin arm64
+          TARGETS
+          printf 'tag=%s\nversion=%s\n' "$tag" "$version" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub release
         env:
@@ -58,5 +64,4 @@ jobs:
           gh release create "${{ steps.build.outputs.tag }}" \
             --title "Omni ${{ steps.build.outputs.tag }}" \
             --notes-file release-notes/${{ steps.build.outputs.version }}.md \
-            dist/${{ steps.build.outputs.asset }} \
-            dist/${{ steps.build.outputs.asset }}.sha256
+            dist/*

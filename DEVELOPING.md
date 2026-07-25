@@ -20,7 +20,7 @@ Before opening a change, run the daily quality gate and include tests and docume
 
 - Go 1.26 or newer.
 - Git.
-- `curl` and `sha256sum` to test the Linux installer.
+- `curl` and either `sha256sum` (Linux) or `shasum` (macOS) to test the installer.
 
 No package-manager bootstrap is required for the current project.
 
@@ -94,17 +94,23 @@ gh release view vX.Y.Z
 
 If the workflow fails, fix the cause with a new commit, push `master`, move the unshared tag only after deliberate review, and re-run the workflow. Never publish a different binary under an already-consumed version by accident.
 
-The [release workflow](.github/workflows/release.yml) tests and vets the tag, then builds a stripped static Linux x86_64 binary with `CGO_ENABLED=0`. It creates the GitHub release using the matching versioned release-note file and publishes:
+The [release workflow](.github/workflows/release.yml) tests and vets the tag, then cross-compiles stripped binaries with `CGO_ENABLED=0`. It creates the GitHub release using the matching versioned release-note file and publishes:
 
 ```text
 omni_linux_amd64
 omni_linux_amd64.sha256
+omni_linux_arm64
+omni_linux_arm64.sha256
+omni_darwin_amd64
+omni_darwin_amd64.sha256
+omni_darwin_arm64
+omni_darwin_arm64.sha256
 ```
 
 Verify the downloaded, finished release with:
 
 ```bash
-gh release download vX.Y.Z --pattern omni_linux_amd64 --dir /tmp/omni-verify
+gh release download vX.Y.Z --pattern 'omni_*' --dir /tmp/omni-verify
 chmod +x /tmp/omni-verify/omni_linux_amd64
 /tmp/omni-verify/omni_linux_amd64 --version
 ```
