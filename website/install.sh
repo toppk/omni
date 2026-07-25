@@ -7,6 +7,11 @@ install_dir="${OMNI_INSTALL_DIR:-$HOME/.local/bin}"
 release_url="https://github.com/$repository/releases/latest/download"
 target="$install_dir/omni"
 
+case ":${PATH:-}:" in
+  *":$HOME/.local/bin:"*) ;;
+  *) echo "warning: $HOME/.local/bin is not on PATH; add it to run omni by name." >&2 ;;
+esac
+
 case "$(uname -s):$(uname -m)" in
   Linux:x86_64|Linux:amd64) asset="omni_linux_amd64"; checksum_tool="sha256sum" ;;
   Linux:aarch64|Linux:arm64) asset="omni_linux_arm64"; checksum_tool="sha256sum" ;;
@@ -71,4 +76,3 @@ temporary_target="$install_dir/.omni-install-$$"
 install -m 0755 "$binary" "$temporary_target"
 mv -f "$temporary_target" "$target"
 echo "Installed $next_version to $target"
-case ":$PATH:" in *":$install_dir:"*) ;; *) echo "Add $install_dir to PATH, then run: omni help" ;; esac
