@@ -149,6 +149,11 @@ must be derived from one response value: do not maintain separate provider
 encoders. Presentation is allowed only after the effect token, so it cannot
 obscure or alter the action path.
 
+Text is a decision-oriented projection, not a field-for-field JSON dump. It
+may omit compact JSON fields that make terminal scans unreadable, provided JSON
+remains available for full machine detail and the text view retains the fields
+needed for the human's likely next decision.
+
 When one endpoint returns more than one kind of record, shape each variant
 deliberately. A compaction routine written for the common record will silently
 drop the fields that distinguish the others, and those are frequently the exact

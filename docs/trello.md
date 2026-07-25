@@ -64,6 +64,16 @@ ATTACHMENT_ID --output FILE`; uploads and deletion use their distinct create
 and delete commands. Omni limits attachment transfer to 25 MiB and never
 writes attachment bytes to stdout.
 
+Card search scans the selected board before applying its output limit. Its
+response includes `matched` and `truncated`, so a bounded result cannot look
+complete. Use `label:NAME` to search by one board label name; an unknown label
+name is rejected rather than treated as an empty result.
+
+Card creation accepts repeatable `--label LABEL_ID` and `--member MEMBER_ID`
+options. Omni verifies every requested ID against the destination board before
+creating the card, then sends the relationships in Trello's initial card-create
+request so they cannot be silently dropped.
+
 `move trello card move` and other card mutations refuse archived cards. Restore
 a card deliberately with `update trello card unarchive CARD_ID`; archive and
 unarchive are each other's explicit reversal paths.
@@ -74,8 +84,8 @@ adding cards or changing its metadata.
 
 ## MVP capabilities
 
-The Trello MVP supports compact card enumeration and search; attachment
-inspection; checklist item inspection, completion, and rename; card updates,
+The Trello MVP supports compact card enumeration and search; attachment list,
+download, upload, and deletion; checklist item inspection, completion, and rename; card updates,
 due-date completion, and explicit unarchive; board-description updates; list
 creation, rename, archive, and unarchive; comments; board labels; board
 members; card member and label assignment; and compact card activity. Use
@@ -95,6 +105,5 @@ materially different targets.
 substantially larger and remain available through `observe trello checklist
 list CARD_ID`. If live use shows the combined card, comment, and checklist view
 is worth its additional bounded output, add it as an explicit operation rather
-than silently widening `card review`. General board mutation and attachment
-upload or deletion are likewise deferred until a demonstrated workflow needs
-them.
+than silently widening `card review`. General board mutation beyond board
+description remains deferred until a demonstrated workflow needs it.

@@ -92,7 +92,10 @@ OMNI_OUTPUT=json omni observe trello board list
 
 `OMNI_OUTPUT` accepts `text` or `json` and sets the default for a process. An
 explicit `--format text|json` overrides it. JSON remains the stable contract
-for agents and scripts; text is rendered from the same compact response.
+for agents and scripts; text is rendered from the same compact response. Text
+card collections are deliberately scan-oriented (name, checklist progress,
+labels, member initials, due date, and list), while JSON retains the complete
+compact card record.
 
 ## Trello commands
 
