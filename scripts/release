@@ -1,0 +1,105 @@
+#!/bin/sh
+# Release Omni from the current master tip. This script is invoked by Taskfile.yml.
+set -eu
+
+die() {
+	printf 'error: %s\n' "$*" >&2
+	exit 1
+}
+
+usage() {
+	cat >&2 <<'EOF'
+usage: task release [BUMP=patch|minor|major]
+       task release:next BUMP=patch|minor|major
+
+Without BUMP, task release prompts for patch, minor, or major.
+EOF
+	exit 1
+}
+
+mode=${1:-release}
+[ "$mode" = release ] || [ "$mode" = --next ] || usage
+
+bump=${BUMP:-}
+if [ -z "$bump" ]; then
+	if [ "$mode" = --next ] || [ ! -t 0 ]; then
+		usage
+	fi
+	printf 'Release bump (patch, minor, or major): ' >&2
+	IFS= read -r bump
+fi
+
+case "$bump" in
+	patch|minor|major) ;;
+	*) die "BUMP must be patch, minor, or major" ;;
+esac
+
+branch=$(git symbolic-ref --quiet --short HEAD) || die "release must run from the master branch"
+[ "$branch" = master ] || die "release must run from master, not $branch"
+
+if [ "$mode" = release ]; then
+	[ -z "$(git status --porcelain)" ] || die "worktree is not clean; commit or stash changes before releasing"
+	command -v gh >/dev/null 2>&1 || die "GitHub CLI (gh) is required to publish and verify a release"
+	git fetch --quiet origin master --tags
+fi
+
+latest_tag=$(git tag --merged HEAD --list 'v[0-9]*' --sort=-version:refname | sed -n '1p')
+[ -n "$latest_tag" ] || die "no semantic version tag is reachable from master"
+printf '%s\n' "$latest_tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' || die "latest reachable tag is not a stable semantic version: $latest_tag"
+
+version=${latest_tag#v}
+old_ifs=$IFS
+IFS=.
+set -- $version
+IFS=$old_ifs
+major=$1
+minor=$2
+patch=$3
+
+case "$bump" in
+	patch) patch=$((patch + 1)) ;;
+	minor) minor=$((minor + 1)); patch=0 ;;
+	major) major=$((major + 1)); minor=0; patch=0 ;;
+esac
+
+next_version=$major.$minor.$patch
+next_tag=v$next_version
+
+if [ "$mode" = --next ]; then
+	printf '%s\n' "$next_version"
+	exit 0
+fi
+
+notes=release-notes/$next_version.md
+[ -f "$notes" ] || die "missing $notes; create it from release-notes/TEMPLATE.md before releasing"
+! git rev-parse --verify --quiet "refs/tags/$next_tag" >/dev/null || die "local tag $next_tag already exists"
+
+printf 'Release Omni %s (%s from %s)? [y/N] ' "$next_tag" "$bump" "$latest_tag" >&2
+IFS= read -r confirm
+case "$confirm" in
+	y|Y|yes|YES) ;;
+	*) printf 'Release cancelled.\n' >&2; exit 0 ;;
+esac
+
+./scripts/check
+
+git merge-base --is-ancestor origin/master HEAD || die "local master does not contain origin/master; integrate remote changes before releasing"
+! git ls-remote --exit-code --tags origin "refs/tags/$next_tag" >/dev/null 2>&1 || die "remote tag $next_tag already exists"
+
+git push origin master
+git tag -a "$next_tag" -m "Omni $next_tag"
+git push origin "$next_tag"
+
+printf 'Waiting for the release workflow for %s...\n' "$next_tag" >&2
+run_id=""
+attempt=0
+while [ "$attempt" -lt 30 ]; do
+	run_id=$(gh run list --workflow release.yml --event push --limit 20 --json databaseId,headBranch --jq ".[] | select(.headBranch == \"$next_tag\") | .databaseId" | sed -n '1p')
+	[ -n "$run_id" ] && break
+	attempt=$((attempt + 1))
+	sleep 2
+done
+[ -n "$run_id" ] || die "tag was pushed, but the release workflow was not found; inspect it with gh run list --workflow release.yml"
+
+gh run watch "$run_id" --exit-status
+gh release view "$next_tag"

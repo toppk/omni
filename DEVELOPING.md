@@ -22,8 +22,9 @@ Before opening a change, run the daily quality gate and include tests and docume
 - Go 1.26 or newer.
 - Git.
 - `curl` and either `sha256sum` (Linux) or `shasum` (macOS) to test the installer.
+- [Task](https://taskfile.dev/) v3 or newer for the optional development and release shortcuts.
 
-No package-manager bootstrap is required for the current project.
+Task is a development convenience, not a runtime or Go-module dependency. Direct Go commands and `scripts/check` remain supported. Install Task using its [official instructions](https://taskfile.dev/installation/) when you want the shortcuts below.
 
 ## Daily quality gate
 
@@ -40,8 +41,12 @@ go vet ./...
 # Run the complete local gate used before commits.
 ./scripts/check
 
+# The same gate through Task.
+task check
+
 # Build a local development binary.
 go build -o ./bin/omni ./cmd/omni
+task build
 ./bin/omni version  # omni dev
 ```
 
@@ -72,28 +77,28 @@ When adding a command, test at least:
 
 Releases are tag-driven. The version is not stored in Go source: the release workflow compiles the `vX.Y.Z` tag into `internal/app.Version` with Go linker flags. Do not edit Go source merely to change a version.
 
-Cut a release from the reviewed `master` tip:
+Prepare a release from the reviewed `master` tip by adding `release-notes/X.Y.Z.md` from [the template](release-notes/TEMPLATE.md), then committing the notes with the release-ready changes. The release task chooses the next version from the newest stable tag reachable from `master`; it never guesses a version from source files.
 
-1. Choose `X.Y.Z`, add `release-notes/X.Y.Z.md` from [the template](release-notes/TEMPLATE.md), and ensure it covers Features, Bug fixes, Breaking changes, Security, and Upgrade notes.
-2. Run `./scripts/check` and commit the release notes with the release-ready changes.
-3. Confirm the worktree is clean and `master` contains exactly the commit you intend to release.
-4. Push `master`, create an annotated `vX.Y.Z` tag at that same commit, then push the tag:
+Run the normal release flow:
 
 ```bash
-git status -sb
+task release
+```
+
+It asks for `patch`, `minor`, or `major`, shows the computed version, and asks for final confirmation. For a deliberate non-interactive choice, use `task release BUMP=patch`. Preview a computed value without changing anything with `task release:next BUMP=minor`.
+
+Before pushing, the task requires `master`, a clean worktree, matching release notes, no existing local tag, a passing quality gate, and a local `master` that contains the current `origin/master`. It then pushes `master`, creates and pushes an annotated tag, waits for the matching GitHub Actions release workflow, and displays the completed GitHub release. If the tag push succeeds but the workflow fails, fix the cause with a new commit and release a new version; never reuse a consumed version.
+
+The equivalent manual sequence remains useful for recovery or environments without Task:
+
+```bash
+./scripts/check
 git push origin master
 git tag -a vX.Y.Z -m "Omni vX.Y.Z"
 git push origin vX.Y.Z
-```
-
-5. The tag starts the release workflow. Wait for it to finish and inspect the resulting release:
-
-```bash
 gh run list --workflow release.yml --limit 1
 gh release view vX.Y.Z
 ```
-
-If the workflow fails, fix the cause with a new commit, push `master`, move the unshared tag only after deliberate review, and re-run the workflow. Never publish a different binary under an already-consumed version by accident.
 
 The [release workflow](.github/workflows/release.yml) tests and vets the tag, then cross-compiles stripped binaries with `CGO_ENABLED=0`. It creates the GitHub release using the matching versioned release-note file and publishes:
 

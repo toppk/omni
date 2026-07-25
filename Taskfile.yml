@@ -1,0 +1,31 @@
+version: '3'
+
+tasks:
+  check:
+    desc: Run the complete local quality gate.
+    cmds:
+      - ./scripts/check
+
+  build:
+    desc: Build a local development binary at ./bin/omni.
+    cmds:
+      - mkdir -p ./bin
+      - go build -o ./bin/omni ./cmd/omni
+
+  release:
+    desc: Prompt for a semantic-version bump, then tag, publish, and verify a release.
+    vars:
+      BUMP: '{{.BUMP | default ""}}'
+    env:
+      BUMP: '{{.BUMP}}'
+    cmds:
+      - sh ./scripts/release
+
+  release:next:
+    desc: Print the version that a patch, minor, or major bump would produce.
+    vars:
+      BUMP: '{{.BUMP | default ""}}'
+    env:
+      BUMP: '{{.BUMP}}'
+    cmds:
+      - sh ./scripts/release --next
