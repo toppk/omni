@@ -51,6 +51,10 @@ All supplied values are stored at once. --default-board and --api-url are
 ordinary settings; --api-key and --api-token are secrets. Secret values are
 never printed by Omni, but command-line values can remain in shell history.
 
+For this local agent workflow, generate a user token manually from the API-key
+page. A Power-Up is required to obtain an API key, but Omni does not require
+the Power-Up app secret or implement Trello's OAuth flow.
+
 --default-board is optional. If you do not know a board ID, configure the API
 key and token first, then list visible boards:
   omni observe trello board list
@@ -256,7 +260,7 @@ func configure(args []string, out io.Writer) error {
 		_, err = fmt.Fprintf(out, "%s\n", entry.SetupURL)
 		return err
 	}
-	if same(args, []string{"trello", "--help"}) || same(args, []string{"trello", "help"}) {
+	if same(args, []string{"trello"}) || same(args, []string{"trello", "--help"}) || same(args, []string{"trello", "help"}) {
 		_, err = fmt.Fprint(out, trelloConfigUsage)
 		return err
 	}
@@ -496,7 +500,7 @@ func setup(args []string, out io.Writer) error {
 		return fmt.Errorf("unknown service; available setup: tailscale, trello")
 	}
 	key, _ := config.Lookup("trello.api-key")
-	_, err := fmt.Fprintf(out, "Trello setup\n\n1. Read the API overview:\n   %s\n\n2. Follow Trello's app-management walkthrough to create an API key:\n   https://developer.atlassian.com/cloud/trello/guides/power-ups/managing-apps/\n\n3. Open the Trello app-management page directly:\n   https://trello.com/apps/admin\n\n4. Generate a user token from the API-key page, then configure Omni in one command:\n   omni configure trello --default-board BOARD_ID --api-key API_KEY --api-token API_TOKEN\n\nThe board ID is optional; omit --default-board if you prefer to specify it per command.\n", key.SetupURL)
+	_, err := fmt.Fprintf(out, "Trello setup\n\nStart with the local configuration guide:\n   omni configure trello\n\n1. Read the API overview:\n   %s\n\n2. Follow Trello's app-management walkthrough to create the minimal Power-Up required for an API key:\n   https://developer.atlassian.com/cloud/trello/guides/power-ups/managing-apps/\n\n3. Open the Trello app-management page directly:\n   https://trello.com/apps/admin\n\n4. Open the app's API Key tab and click Generate a Token. Approve access, copy the user token, then configure Omni:\n   omni configure trello --default-board BOARD_ID --api-key API_KEY --api-token API_TOKEN\n\nThis is Omni's current agent-oriented setup.\nThe Power-Up only supplies the API key; its app secret is not needed.\nThe board ID is optional; omit --default-board if you prefer to specify it per command.\n", key.SetupURL)
 	return err
 }
 

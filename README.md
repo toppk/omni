@@ -57,12 +57,12 @@ omni configure trello --default-board BOARD_ID --api-key API_KEY --api-token API
 
 # Inspect every registry key, its type, and whether it has a code default.
 omni configure describe
-omni configure help trello.api-key
+omni configure trello
 ```
 
 The Trello command stores ordinary settings in `settings.toml` and secrets only in `credentials/credentials.toml`. Commands acknowledge keys but never print secret values. Shell arguments can remain in history or be visible to local processes, so use a short-lived shell or clear the relevant history entry after using the convenience form.
 
-`omni configure help trello.api-key` prints Trello's official API introduction and credential guide: [developer.atlassian.com/cloud/trello/guides/rest-api/api-introduction](https://developer.atlassian.com/cloud/trello/guides/rest-api/api-introduction/). Advanced registry setters and removal commands are available through `omni configure set`, `omni configure delete`, `omni configure secret set`, and `omni configure secret delete`.
+`omni configure trello` prints the local setup and configuration guide without creating configuration files. Omni's current agent-oriented setup is intentionally manual: create the minimal Power-Up necessary for the API key, then use the API Key tab's Token link to generate a user token. The Power-Up app secret is not needed. Advanced registry setters and removal commands are available through `omni configure set`, `omni configure delete`, `omni configure secret set`, and `omni configure secret delete`.
 
 For example, `trello.api-url` is an optional setting that defaults to `https://api.trello.com/1`. Point it at a compatible mock server with `omni configure trello --api-url URL`; this override applies to the native Trello client without changing code.
 

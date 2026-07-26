@@ -16,12 +16,11 @@ For API-key and token creation, use these official Trello resources in order:
 2. [App-management walkthrough](https://developer.atlassian.com/cloud/trello/guides/power-ups/managing-apps/)
 3. [Trello app-management page](https://trello.com/apps/admin), the direct location for creating or managing an API key
 
-`omni setup trello` prints all three. The overview URL is also available
-locally through:
+`omni setup trello` starts by directing you to the local configuration guide:
 
 ```bash
 omni setup trello
-omni configure help trello.api-key
+omni configure trello
 ```
 
 Configure the supported values in one command:
@@ -29,6 +28,14 @@ Configure the supported values in one command:
 ```bash
 omni configure trello --default-board BOARD_ID --api-key API_KEY --api-token API_TOKEN
 ```
+
+For Omni's current agent-oriented setup, create only the minimal Power-Up
+needed to obtain an API key, then open its API Key tab and click **Generate a
+Token**. Approve access and copy the resulting user token into Omni. Omni does
+not need the Power-Up app secret.
+Trello documents a separate OAuth flow, but that flow is designed for an
+application-mediated user authorization experience and is not Omni's current
+setup path.
 
 `trello.default-board-id` is optional. `trello.api-url` defaults to the public
 API endpoint and may be overridden for a compatible mock server.

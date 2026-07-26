@@ -46,7 +46,7 @@ Use the smallest OAuth scopes available.
 
 Trello authenticates API requests with an API key and a user token.
 
-1. While signed into Trello, read the official [API introduction](https://developer.atlassian.com/cloud/trello/guides/rest-api/api-introduction/), follow the [app-management walkthrough](https://developer.atlassian.com/cloud/trello/guides/power-ups/managing-apps/), then create or manage the API key at [trello.com/apps/admin](https://trello.com/apps/admin). `omni setup trello` prints all three links; `omni configure help trello.api-key` prints the overview.
+1. Run `omni configure trello` to view the local configuration guide, then, while signed into Trello, read the official [API introduction](https://developer.atlassian.com/cloud/trello/guides/rest-api/api-introduction/), follow the [app-management walkthrough](https://developer.atlassian.com/cloud/trello/guides/power-ups/managing-apps/), and create or manage the API key at [trello.com/apps/admin](https://trello.com/apps/admin). `omni setup trello` directs you to this guide.
 2. From that page, use the token-generation link. Review the requested access and select the least privilege and shortest lifetime that supports the intended work.
 3. Store both values locally, without editing the secret file directly:
 
@@ -57,6 +57,12 @@ omni configure trello --api-key "your-api-key" --api-token "your-user-token"
 4. Start with `omni observe trello board list` when provider calls are enabled. Use separate `create`, `move`, `archive`, and `delete` paths for changes; no observation flag will cause a mutation.
 
 Revoke or rotate a token from Trello if it is exposed. Use an account with only the workspaces and boards needed for the operation.
+
+For Omni's current agent-oriented setup, the Power-Up exists only to produce
+the API key. On that Power-Up's API Key tab, click **Generate a Token**, approve
+access, and copy the resulting user token; do not provide the app secret to
+Omni. Trello also documents an application-mediated OAuth flow, but Omni does
+not currently use it.
 
 ## Current implementation status
 

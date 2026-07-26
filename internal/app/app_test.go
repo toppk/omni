@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -18,6 +20,12 @@ func TestSetupTrelloShowsSingleConfigurationCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := out.String()
+	if !strings.Contains(text, "Start with the local configuration guide:\n   omni configure trello") {
+		t.Fatalf("setup did not point to the configuration guide: %s", text)
+	}
+	if !strings.Contains(text, "click Generate a Token") {
+		t.Fatalf("setup did not name Trello's token-generation action: %s", text)
+	}
 	if !strings.Contains(text, "omni configure trello --default-board BOARD_ID --api-key API_KEY --api-token API_TOKEN") {
 		t.Fatalf("unexpected setup output: %s", text)
 	}
@@ -28,10 +36,10 @@ func TestSetupTrelloShowsSingleConfigurationCommand(t *testing.T) {
 	}
 }
 
-func TestConfigureTrelloHelpDoesNotInitializeFiles(t *testing.T) {
+func TestConfigureTrelloWithoutOptionsShowsHelpAndDoesNotInitializeFiles(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	var out bytes.Buffer
-	if err := Run(context.Background(), []string{"configure", "trello", "--help"}, &out, &bytes.Buffer{}); err != nil {
+	if err := Run(context.Background(), []string{"configure", "trello"}, &out, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
@@ -43,6 +51,16 @@ func TestConfigureTrelloHelpDoesNotInitializeFiles(t *testing.T) {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("missing %q from Trello configuration help", want)
 		}
+	}
+	paths, err := config.DefaultPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(paths.Settings); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("settings file should not be initialized, stat error = %v", err)
+	}
+	if _, err := os.Stat(paths.Credentials); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("credentials file should not be initialized, stat error = %v", err)
 	}
 }
 
