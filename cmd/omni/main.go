@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/toppk/omni/internal/app"
+	"github.com/toppk/omni"
 )
 
 func main() {
-	if err := app.Run(context.Background(), os.Args[1:], os.Stdout, os.Stderr); err != nil {
+	if err := omni.Run(context.Background(), os.Args[1:], os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
