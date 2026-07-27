@@ -70,9 +70,7 @@ if [ "$previous_version" = "$next_version" ]; then
   exit 0
 fi
 
-if [ "$previous_version" = "not installed" ]; then
-  echo "Installing: not installed → $next_version"
-else
+if [ "$previous_version" != "not installed" ]; then
   echo "Upgrading: $previous_version → $next_version"
 fi
 
