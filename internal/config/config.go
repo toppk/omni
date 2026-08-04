@@ -103,6 +103,36 @@ func LoadEphemeralTailscaleToken(path string, now time.Time) (string, error) {
 	return token, nil
 }
 
+type TailscaleTokenMetadata struct {
+	Cached    bool
+	Valid     bool
+	ExpiresAt time.Time
+}
+
+// LoadEphemeralTailscaleTokenMetadata reports cache state without reading or
+// returning the cached access-token secret.
+func LoadEphemeralTailscaleTokenMetadata(path string, now time.Time) (TailscaleTokenMetadata, error) {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return TailscaleTokenMetadata{}, nil
+	} else if err != nil {
+		return TailscaleTokenMetadata{}, err
+	}
+	expires, err := Get(path, "tailscale.generated-api-key-expires-at")
+	if err != nil {
+		return TailscaleTokenMetadata{}, err
+	}
+	metadata := TailscaleTokenMetadata{Cached: true}
+	if expires == "" {
+		return metadata, nil
+	}
+	metadata.ExpiresAt, err = time.Parse(time.RFC3339, expires)
+	if err != nil {
+		return TailscaleTokenMetadata{}, fmt.Errorf("parse cached Tailscale token expiry: %w", err)
+	}
+	metadata.Valid = metadata.ExpiresAt.After(now.Add(5 * time.Minute))
+	return metadata, nil
+}
+
 func StoreEphemeralTailscaleToken(path, token string, expiresAt time.Time) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err

@@ -128,6 +128,116 @@ func TestDeviceLifecycleMutationsUseFixedEndpoints(t *testing.T) {
 	}
 }
 
+func TestDeviceRetirementPreflightCollectsRoutesAndTagPolicy(t *testing.T) {
+	c := testClient(t, func(r *http.Request) (*http.Response, error) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/device/dev1":
+			return response(`{"id":"dev1","hostname":"old-host","tags":["tag:hi2"],"isExternal":false,"keyExpiryDisabled":true}`, nil), nil
+		case r.Method == http.MethodGet && r.URL.Path == "/device/dev1/routes":
+			return response(`{"advertisedRoutes":["10.0.0.0/24"],"enabledRoutes":["10.0.0.0/24"]}`, nil), nil
+		case r.Method == http.MethodGet && r.URL.Path == "/tailnet/-/acl":
+			return response(`{"tagOwners":{"tag:hi2":["group:ops"]}}`, nil), nil
+		case r.Method == http.MethodPost && r.URL.Path == "/tailnet/-/acl/preview":
+			if r.URL.Query().Get("previewFor") != "tag:hi2" {
+				t.Fatalf("preview query = %s", r.URL.RawQuery)
+			}
+			return response(`{"matches":[{"dst":"tag:db:*"}]}`, nil), nil
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
+			return nil, nil
+		}
+	})
+	var out bytes.Buffer
+	if err := c.execute(definition(t, "observe", "tailscale", "device", "retirement", "preflight"), []string{"dev1"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"evidence_complete":true`, `"requires_operator_acknowledgement":true`, `"enabledRoutes":["10.0.0.0/24"]`, `"tag":"tag:hi2"`, `"deletion_supported":true`, `Enabled subnet or exit-node routes will stop`, `"code":"enabled_routes"`, `"code":"matching_acl_policy"`} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("preflight output %s does not contain %s", out.String(), want)
+		}
+	}
+	if strings.Contains(out.String(), "ready_for_delete") {
+		t.Fatalf("preflight implies operational approval: %s", out.String())
+	}
+}
+
+func TestDeviceRetirementPreflightFailsClosedWithPartialEvidence(t *testing.T) {
+	c := testClient(t, func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path == "/device/dev1" {
+			return response(`{"id":"dev1","tags":[]}`, nil), nil
+		}
+		if r.URL.Path == "/device/dev1/routes" {
+			return responseStatus(http.StatusForbidden, "403 Forbidden", `{"message":"missing scope"}`), nil
+		}
+		t.Fatalf("unexpected request %s", r.URL.Path)
+		return nil, nil
+	})
+	var out bytes.Buffer
+	err := c.execute(definition(t, "observe", "tailscale", "device", "retirement", "preflight"), []string{"dev1"}, &out)
+	if err == nil || !strings.Contains(err.Error(), "incomplete") || !strings.Contains(out.String(), `"evidence_complete":false`) || !strings.Contains(out.String(), "devices:routes:read") {
+		t.Fatalf("err = %v, output = %s", err, out.String())
+	}
+}
+
+func TestCredentialGetReportsOAuthIdentityScopesAndCacheExpiry(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "ephemeral", "credentials.toml")
+	c := NewClientWithCache(config.TailscaleCredentials{ClientSecret: "secret-value"}, config.TailscaleSettings{APIURL: "https://example.test", Tailnet: "-", ClientID: "k-client"}, cachePath)
+	c.http = &http.Client{Transport: roundTripper(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path == "/oauth/token" {
+			return response(`{"access_token":"issued-token","expires_in":3600}`, nil), nil
+		}
+		if r.URL.Path == "/tailnet/-/keys/k-client" {
+			return response(`{"id":"k-client","keyType":"client","scopes":["devices:core:read","devices:routes:read"],"tags":["tag:ops"]}`, nil), nil
+		}
+		t.Fatalf("unexpected request %s", r.URL.Path)
+		return nil, nil
+	})}
+	var out bytes.Buffer
+	if err := c.execute(definition(t, "observe", "tailscale", "credential", "get"), nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"auth_method":"oauth_client"`, `"client_id":"k-client"`, `"scope_status":"available"`, `"devices:routes:read"`, `"expires_at":`} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("credential output %s does not contain %s", out.String(), want)
+		}
+	}
+	if strings.Contains(out.String(), "secret-value") || strings.Contains(out.String(), "issued-token") {
+		t.Fatalf("credential output leaked a secret: %s", out.String())
+	}
+}
+
+func TestCredentialGetExplainsAPIKeyScopeLimitWithoutNetwork(t *testing.T) {
+	called := false
+	c := testClient(t, func(*http.Request) (*http.Response, error) {
+		called = true
+		return nil, nil
+	})
+	var out bytes.Buffer
+	if err := c.execute(definition(t, "observe", "tailscale", "credential", "get"), nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	if called || !strings.Contains(out.String(), `"auth_method":"api_access_token"`) || !strings.Contains(out.String(), `"scope_status":"not_enumerable"`) || strings.Contains(out.String(), "tskey-api-secret") {
+		t.Fatalf("called = %v, output = %s", called, out.String())
+	}
+}
+
+func TestCredentialGetReportsUnavailableOAuthScopeMetadata(t *testing.T) {
+	c := NewClient(config.TailscaleCredentials{ClientSecret: "secret-value"}, config.TailscaleSettings{APIURL: "https://example.test", Tailnet: "-", ClientID: "k-client"})
+	c.http = &http.Client{Transport: roundTripper(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path == "/oauth/token" {
+			return response(`{"access_token":"issued-token","expires_in":3600}`, nil), nil
+		}
+		return responseStatus(http.StatusForbidden, "403 Forbidden", `{"message":"missing scope for secret-value"}`), nil
+	})}
+	var out bytes.Buffer
+	if err := c.execute(definition(t, "observe", "tailscale", "credential", "get"), nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), `"scope_status":"unavailable"`) || !strings.Contains(out.String(), "oauth_keys:read") || strings.Contains(out.String(), "issued-token") || strings.Contains(out.String(), "secret-value") {
+		t.Fatalf("credential output = %s", out.String())
+	}
+}
+
 func TestAuthKeyCreateWritesSecretOnlyToPrivateFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "enrollment.key")
 	c := testClient(t, func(r *http.Request) (*http.Response, error) {

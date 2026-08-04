@@ -100,7 +100,7 @@ func TestSetupAndConfigureTailscale(t *testing.T) {
 	if err := Run(context.Background(), []string{"setup", "tailscale"}, &out, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "--client-id CLIENT_ID") || !strings.Contains(out.String(), "tailscale.com") {
+	if !strings.Contains(out.String(), "--client-id CLIENT_ID") || !strings.Contains(out.String(), "tailscale.com") || !strings.Contains(out.String(), "devices:routes:read") {
 		t.Fatalf("unexpected setup output: %s", out.String())
 	}
 	out.Reset()

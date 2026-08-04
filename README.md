@@ -121,7 +121,8 @@ The first four are `observe` commands. The change operations have their own acti
 Tailscale can use either a simple broad API access token or a scoped OAuth
 client. The full credential and token-cache behavior is in
 [docs/tailscale.md](docs/tailscale.md). It defaults to the tailnet that owns
-the active token:
+the active token. Scoped OAuth clients need `devices:routes:read` for route
+listing and device-retirement preflight:
 
 ```bash
 omni setup tailscale
@@ -133,14 +134,22 @@ omni observe tailscale device list
 omni observe tailscale device list --details
 omni observe tailscale device get DEVICE_ID
 omni observe tailscale device route list DEVICE_ID
+omni observe tailscale device retirement preflight DEVICE_ID
 omni update tailscale device name set DEVICE_ID NAME
 omni authorize tailscale device tag set DEVICE_ID tag:prod
+omni authorize tailscale device authorization set DEVICE_ID --state authorized
+omni update tailscale device key expiry set DEVICE_ID --state disabled
+omni administer tailscale device key expire DEVICE_ID
+omni delete tailscale device delete DEVICE_ID
 omni observe tailscale acl get --output acl.hujson
 omni observe tailscale acl validate acl.hujson
 omni observe tailscale acl preview --for tag:github
 omni administer tailscale acl set acl.hujson --backup acl-before-change.hujson
 omni observe tailscale key list
 omni observe tailscale key get KEY_ID
+omni observe tailscale credential get
+omni create tailscale key auth create --output enrollment.key --tag tag:server
+omni delete tailscale key revoke KEY_ID
 omni observe tailscale dns get
 omni observe tailscale user list
 omni observe tailscale user get USER_ID
@@ -156,6 +165,11 @@ returns a nonzero exit status. Preview identifies the rules matching a source
 identity without applying a change. ACL replacement validates the candidate,
 requires a new private backup file, and uses an ETag guard. Tag replacement and
 ACL replacement have their own high-impact effect paths.
+Before removing a device, run the retirement preflight. Its
+`evidence_complete` field describes API evidence collection only; active
+routes and matching ACL rules produce structured operator-acknowledgement
+reasons with stable codes such as `enabled_routes` and
+`matching_acl_policy`.
 
 ## Capability discovery
 

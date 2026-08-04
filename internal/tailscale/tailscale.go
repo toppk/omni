@@ -223,6 +223,21 @@ func (c *Client) executeWithFormat(d command.Definition, args []string, format o
 			return decode(err)
 		}
 		result = map[string]any{"routes": routes}
+	case "observe tailscale device retirement preflight":
+		if err := exact(args, 1, d.Name()); err != nil {
+			return err
+		}
+		preflight, complete, err := c.deviceRetirementPreflight(args[0])
+		if err != nil {
+			return err
+		}
+		result = map[string]any{"preflight": preflight}
+		if !complete {
+			if err := output.Encode(out, format, result); err != nil {
+				return err
+			}
+			return fmt.Errorf("Tailscale device retirement preflight is incomplete; review missing_evidence before deletion")
+		}
 	case "update tailscale device name set":
 		if err := exact(args, 2, d.Name()); err != nil {
 			return err
@@ -414,6 +429,11 @@ func (c *Client) executeWithFormat(d command.Definition, args []string, format o
 			return decode(err)
 		}
 		result = map[string]any{"key": compactKey(key)}
+	case "observe tailscale credential get":
+		if err := exact(args, 0, d.Name()); err != nil {
+			return err
+		}
+		result = map[string]any{"credential": c.credentialReport()}
 	case "create tailscale key auth create":
 		options, err := authKeyCreateOptions(args, d.Name())
 		if err != nil {
@@ -517,6 +537,167 @@ func (c *Client) json(method, endpoint string, value any) ([]byte, http.Header, 
 		return nil, nil, err
 	}
 	return c.request(method, endpoint, "application/json", bytes.NewReader(b))
+}
+
+func (c *Client) credentialReport() map[string]any {
+	report := map[string]any{
+		"api_url": c.baseURL,
+		"tailnet": c.tailnet,
+	}
+	if c.creds.APIKey != "" {
+		report["auth_method"] = "api_access_token"
+		report["configuration_sources"] = []string{"tailscale.api-key", "tailscale.tailnet", "tailscale.api-url"}
+		report["scope_status"] = "not_enumerable"
+		report["scope_explanation"] = "API access-token permissions follow the owning user; Omni does not inspect or expose the token secret to derive its key identity."
+		return report
+	}
+	report["auth_method"] = "oauth_client"
+	report["client_id"] = c.clientID
+	report["configuration_sources"] = []string{"tailscale.client-id", "tailscale.client-secret", "tailscale.tailnet", "tailscale.api-url"}
+	if c.clientID == "" || c.creds.ClientSecret == "" {
+		report["configuration_status"] = "incomplete"
+		report["configuration_error"] = "tailscale.client-id and tailscale.client-secret are both required"
+		return report
+	}
+	report["configuration_status"] = "configured"
+	data, _, err := c.request(http.MethodGet, c.tailnetPath("/keys/")+url.PathEscape(c.clientID), "", nil)
+	if err != nil {
+		report["scope_status"] = "unavailable"
+		report["scope_error"] = "OAuth client metadata requires oauth_keys:read: " + c.redactCredentialError(err.Error())
+	} else {
+		var key map[string]any
+		if err := json.Unmarshal(data, &key); err != nil {
+			report["scope_status"] = "unavailable"
+			report["scope_error"] = decode(err).Error()
+		} else {
+			report["scope_status"] = "available"
+			report["client"] = compactKey(key)
+		}
+	}
+	if c.cachePath != "" {
+		metadata, err := config.LoadEphemeralTailscaleTokenMetadata(c.cachePath, time.Now())
+		if err != nil {
+			report["token_cache"] = map[string]any{"status": "unavailable", "error": err.Error()}
+		} else {
+			cache := map[string]any{"cached": metadata.Cached, "valid": metadata.Valid, "source": "tailscale.generated-api-key"}
+			if !metadata.ExpiresAt.IsZero() {
+				cache["expires_at"] = metadata.ExpiresAt.UTC().Format(time.RFC3339)
+			}
+			report["token_cache"] = cache
+		}
+	}
+	return report
+}
+
+func (c *Client) redactCredentialError(message string) string {
+	for _, secret := range []string{c.creds.APIKey, c.creds.ClientSecret, c.accessToken} {
+		if secret != "" {
+			message = strings.ReplaceAll(message, secret, "[REDACTED]")
+		}
+	}
+	return message
+}
+
+func (c *Client) deviceRetirementPreflight(deviceID string) (map[string]any, bool, error) {
+	data, _, err := c.request(http.MethodGet, "/device/"+url.PathEscape(deviceID), "", nil)
+	if err != nil {
+		return nil, false, err
+	}
+	var device map[string]any
+	if err := json.Unmarshal(data, &device); err != nil {
+		return nil, false, decode(err)
+	}
+	deviceEvidence := pick(device, "id", "nodeId", "hostname", "name", "user", "os", "lastSeen", "authorized", "isExternal", "isEphemeral", "tags", "addresses", "clientVersion", "expires", "keyExpiryDisabled")
+	preflight := map[string]any{
+		"device":                           deviceEvidence,
+		"deletion_supported":               device["isExternal"] != true,
+		"evidence_complete":                true,
+		"missing_evidence":                 []map[string]string{},
+		"tag_policy":                       []map[string]any{},
+		"operator_acknowledgement_reasons": []map[string]string{},
+		"consequences": []string{
+			"The device will be removed from the tailnet and active connections will end.",
+			"Re-enrollment requires host-side tailscale up with a valid credential.",
+			"Deleting the device does not remove ACL rules, tag owners, auth keys, or references that outlive it.",
+		},
+		"limitations": []string{"Policy references through host aliases, IP literals, users, groups, posture, or indirect tag ownership are not resolved semantically by this preflight."},
+	}
+	missing := preflight["missing_evidence"].([]map[string]string)
+	acknowledgements := preflight["operator_acknowledgement_reasons"].([]map[string]string)
+	if preflight["deletion_supported"] != true {
+		acknowledgements = append(acknowledgements, map[string]string{"code": "shared_device_not_deletable", "area": "device", "severity": "critical", "message": "Tailscale does not support deleting a device shared into the tailnet."})
+	}
+	routeData, _, routeErr := c.request(http.MethodGet, "/device/"+url.PathEscape(deviceID)+"/routes", "", nil)
+	if routeErr != nil {
+		missing = append(missing, map[string]string{"area": "routes", "error": routeErr.Error()})
+	} else {
+		var routes any
+		if err := json.Unmarshal(routeData, &routes); err != nil {
+			missing = append(missing, map[string]string{"area": "routes", "error": decode(err).Error()})
+		} else {
+			preflight["routes"] = routes
+			if routeObject, ok := routes.(map[string]any); ok && len(stringValues(routeObject["enabledRoutes"])) > 0 {
+				consequences := preflight["consequences"].([]string)
+				preflight["consequences"] = append(consequences, "Enabled subnet or exit-node routes will stop being served by this device.")
+				acknowledgements = append(acknowledgements, map[string]string{"code": "enabled_routes", "area": "enabled_routes", "severity": "critical", "message": "Active subnet or exit-node routes will stop being served; confirm replacement routing before deletion."})
+			}
+		}
+	}
+	tags := stringValues(device["tags"])
+	if len(tags) > 0 {
+		acl, _, aclErr := c.request(http.MethodGet, c.tailnetPath("/acl"), "", nil)
+		if aclErr != nil {
+			missing = append(missing, map[string]string{"area": "tag_policy", "error": aclErr.Error()})
+		} else {
+			dependencies := make([]map[string]any, 0, len(tags))
+			for _, tag := range tags {
+				query := url.Values{"type": {"user"}, "previewFor": {tag}}
+				previewData, _, previewErr := c.request(http.MethodPost, c.tailnetPath("/acl/preview")+"?"+query.Encode(), "application/hujson", bytes.NewReader(acl))
+				if previewErr != nil {
+					missing = append(missing, map[string]string{"area": "tag_policy:" + tag, "error": previewErr.Error()})
+					continue
+				}
+				var preview any
+				if err := json.Unmarshal(previewData, &preview); err != nil {
+					missing = append(missing, map[string]string{"area": "tag_policy:" + tag, "error": decode(err).Error()})
+					continue
+				}
+				dependencies = append(dependencies, map[string]any{"tag": tag, "preview": preview})
+				if previewHasMatches(preview) {
+					acknowledgements = append(acknowledgements, map[string]string{"code": "matching_acl_policy", "area": "tag_policy:" + tag, "severity": "high", "message": "Active ACL rules match this device tag; review the preview before deletion."})
+				}
+			}
+			preflight["tag_policy"] = dependencies
+		}
+	}
+	preflight["missing_evidence"] = missing
+	preflight["evidence_complete"] = len(missing) == 0
+	preflight["operator_acknowledgement_reasons"] = acknowledgements
+	preflight["requires_operator_acknowledgement"] = len(acknowledgements) > 0
+	return preflight, len(missing) == 0, nil
+}
+
+func previewHasMatches(value any) bool {
+	preview, ok := value.(map[string]any)
+	if !ok {
+		return false
+	}
+	matches, ok := preview["matches"].([]any)
+	return ok && len(matches) > 0
+}
+
+func stringValues(value any) []string {
+	values, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if text, ok := value.(string); ok {
+			result = append(result, text)
+		}
+	}
+	return result
 }
 
 func compactDeviceList(value map[string]any, details bool) map[string]any {

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestInitializeSecuresExistingCredentialPaths(t *testing.T) {
@@ -35,6 +36,22 @@ func TestInitializeSecuresExistingCredentialPaths(t *testing.T) {
 	}
 	if got := fileInfo.Mode().Perm(); got != 0600 {
 		t.Fatalf("credentials file mode = %o, want 0600", got)
+	}
+}
+
+func TestLoadEphemeralTailscaleTokenMetadataOmitsSecret(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ephemeral", "credentials.toml")
+	now := time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC)
+	expiresAt := now.Add(time.Hour)
+	if err := StoreEphemeralTailscaleToken(path, "must-not-return", expiresAt); err != nil {
+		t.Fatal(err)
+	}
+	metadata, err := LoadEphemeralTailscaleTokenMetadata(path, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !metadata.Cached || !metadata.Valid || !metadata.ExpiresAt.Equal(expiresAt) {
+		t.Fatalf("metadata = %#v", metadata)
 	}
 }
 

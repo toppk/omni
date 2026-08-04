@@ -59,6 +59,15 @@ shown in your Trust credentials UI.
 | API-token metadata | `api_access_tokens:read` | `api_access_tokens` to revoke |
 | OAuth-client metadata | `oauth_keys:read` | `oauth_keys` to revoke |
 
+For normal device inventory, grant `devices:core:read`. Grant
+`devices:routes:read` as well whenever Omni will run
+`observe tailscale device route list` or
+`observe tailscale device retirement preflight`. The retirement preflight also
+uses the ACL read scope because it previews active policy for every attached
+device tag. Without `devices:routes:read`, the preflight emits its partial
+device evidence, identifies the missing route scope, and exits nonzero rather
+than suggesting that deletion is ready.
+
 Tailscale also requires `devices:core:read` and
 `devices:posture_attributes:read` alongside the ACL read scope. The
 `observe tailscale key list` command is intentionally non-secret: with
@@ -68,6 +77,20 @@ Tailscale also requires `devices:core:read` and
 not reveal any key value. Omni actively uses `api_access_tokens:read` for
 `observe tailscale key list` when auditing API-token expiry and scope, and
 `oauth_keys:read` when auditing OAuth-client scopes and tags.
+
+Inspect the credential Omni will actually use without displaying any secret:
+
+```bash
+omni observe tailscale credential get
+```
+
+When an explicit API access token is configured, it wins and the report names
+that method and its logical configuration source. Its permissions follow the
+owning user and cannot safely be derived from the local secret. For OAuth, the
+report includes the client ID, cached access-token expiry, and the client's
+remote scopes and tags when `oauth_keys:read` allows its key metadata to be
+read. If that metadata is unavailable, the structured `scope_error` includes
+the missing-scope guidance without exposing the client secret or access token.
 
 Device lists default to only `id`, `hostname`, `os`, and `lastSeen`. Add
 `--details` to include addresses, client version, tags, ownership, and related
@@ -224,8 +247,25 @@ Permanent removal is a distinct delete operation. Re-enrollment requires a new
 host-side `tailscale up`:
 
 ```bash
+omni observe tailscale device retirement preflight DEVICE_ID
 omni delete tailscale device delete DEVICE_ID
 ```
+
+The retirement preflight reads the exact device record, advertised and enabled
+routes, and an active-policy preview for each attached device tag. It reports
+whether deletion is supported, whether all evidence was collected, whether the
+result requires operator acknowledgement, and the expected consequences.
+`evidence_complete: true` only means Omni obtained its requested API evidence;
+it is never an approval to delete. `requires_operator_acknowledgement` is true
+when active routes or matching ACL rules raise a high-risk dependency, and its
+reasons identify what an operator must review. Each reason includes a stable
+machine-oriented `code` alongside `area`, `severity`, and its human `message`.
+Current codes include `enabled_routes`, `matching_acl_policy`, and
+`shared_device_not_deletable`. Missing route or policy scopes produce a partial
+structured report followed by a nonzero exit; the deletion command is not
+called. Policy references through host aliases, IP literals, users, groups,
+posture rules, and indirect tag ownership remain listed as a limitation rather
+than being guessed from HuJSON text.
 
 All of these mutations are non-unattended operations in Omni's command
 contract. `read-only` and `unattended-safe` policy modes reject them, leaving
