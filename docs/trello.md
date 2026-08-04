@@ -10,6 +10,12 @@ was downloaded from Trello's published
 endpoint. Treat it as a dated investigation input, not as a promise that a
 provider endpoint will remain unchanged.
 
+It is explicitly not the authority for values Omni validates before a write. Its
+`Color` enum, for one, predates Trello's subtle and bold label shades, so a
+validator built from it would reject colors Trello itself reports. Label colors
+are instead pinned to a live capture in
+[internal/trello/testdata](../internal/trello/testdata/README.md).
+
 For API-key and token creation, use these official Trello resources in order:
 
 1. [API introduction and credential overview](https://developer.atlassian.com/cloud/trello/guides/rest-api/api-introduction/)

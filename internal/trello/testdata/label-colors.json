@@ -1,0 +1,59 @@
+{
+    "labels": [
+        {
+            "color": null,
+            "id": "6a7274c5605948d4fcb3762b",
+            "name": "colorless"
+        },
+        {
+            "color": "black_dark",
+            "id": "6a7274c5f38941e4fab1ced2",
+            "name": "black-bold"
+        },
+        {
+            "color": "blue",
+            "id": "6a727451b0416652dccab19a",
+            "name": ""
+        },
+        {
+            "color": "green",
+            "id": "6a727451b0416652dccab195",
+            "name": "green-normal"
+        },
+        {
+            "color": "green_dark",
+            "id": "6a7274c54dd16fe710cd2a1c",
+            "name": "green-bold-set-via-ui"
+        },
+        {
+            "color": "green_light",
+            "id": "6a7274c40778256cd11581d4",
+            "name": "green-subtle"
+        },
+        {
+            "color": "orange",
+            "id": "6a727451b0416652dccab197",
+            "name": ""
+        },
+        {
+            "color": "purple",
+            "id": "6a727451b0416652dccab199",
+            "name": ""
+        },
+        {
+            "color": "red",
+            "id": "6a727451b0416652dccab198",
+            "name": ""
+        },
+        {
+            "color": "sky_light",
+            "id": "6a7274c4dabb9123d379d902",
+            "name": "sky-subtle"
+        },
+        {
+            "color": "yellow",
+            "id": "6a727451b0416652dccab196",
+            "name": ""
+        }
+    ]
+}

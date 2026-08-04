@@ -890,6 +890,70 @@ func TestLabelPaletteEnumeratesExactlyWhatLabelColorAccepts(t *testing.T) {
 	}
 }
 
+// snapshotLabelColors is the Color enum from the committed Trello OpenAPI
+// snapshot. It is here to be proven insufficient: the capture must contain a
+// color this list lacks, or it cannot detect the drift it exists to detect.
+var snapshotLabelColors = []string{"yellow", "purple", "blue", "red", "green", "orange", "black", "sky", "pink", "lime"}
+
+func TestLiveCaptureColorsAreAcceptedByTheWriteValidator(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("testdata", "label-colors.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var capture struct {
+		Labels []struct {
+			Color *string `json:"color"`
+			Name  string  `json:"name"`
+		} `json:"labels"`
+	}
+	if err := json.Unmarshal(raw, &capture); err != nil {
+		t.Fatal(err)
+	}
+	if len(capture.Labels) == 0 {
+		t.Fatal("capture holds no labels")
+	}
+	tiers := map[string]bool{}
+	beyondSnapshot := false
+	for _, label := range capture.Labels {
+		if label.Color == nil {
+			tiers["colorless"] = true
+			// A read reports null; the write path spells it none. If that stopped
+			// resolving, a colorless label would be unrecreatable through Omni.
+			if got, err := labelColor(colorlessLabel); err != nil || got != nil {
+				t.Fatalf("colorless label %q cannot be recreated: %#v, %v", label.Name, got, err)
+			}
+			continue
+		}
+		color := *label.Color
+		got, err := labelColor(color)
+		if err != nil {
+			t.Fatalf("Trello returned color %q on label %q, but label create rejects it: %v", color, label.Name, err)
+		}
+		if got != color {
+			t.Fatalf("color %q from a read normalizes to %#v, so a read cannot be fed back to a write verbatim", color, got)
+		}
+		switch {
+		case strings.HasSuffix(color, "_light"):
+			tiers["subtle"] = true
+		case strings.HasSuffix(color, "_dark"):
+			tiers["bold"] = true
+		default:
+			tiers["unshaded"] = true
+		}
+		if !contains(snapshotLabelColors, color) {
+			beyondSnapshot = true
+		}
+	}
+	for _, tier := range []string{"unshaded", "subtle", "bold", "colorless"} {
+		if !tiers[tier] {
+			t.Fatalf("capture covers no %s color; a refreshed capture lost a shade tier and this pin would pass by construction (see testdata/README.md)", tier)
+		}
+	}
+	if !beyondSnapshot {
+		t.Fatal("capture contains nothing absent from the committed snapshot's Color enum, so it cannot catch a validator built from that snapshot")
+	}
+}
+
 func TestLabelColorListAnswersWithoutCallingTrello(t *testing.T) {
 	stubExecuteClient(t, func(r *http.Request) (*http.Response, error) {
 		t.Fatalf("unexpected request %s %s for a fixed palette", r.Method, r.URL.Path)
