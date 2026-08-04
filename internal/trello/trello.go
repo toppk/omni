@@ -1029,10 +1029,30 @@ func ExecuteWithFormat(d command.Definition, args []string, creds config.TrelloC
 		if err := c.request(http.MethodGet, "/labels/"+url.PathEscape(args[0]), nil, &label); err != nil {
 			return err
 		}
+		boardID, _ := label["idBoard"].(string)
+		if boardID == "" {
+			return fmt.Errorf("Trello label %s did not report its board, so the cards carrying it cannot be recorded before deletion", args[0])
+		}
+		// Record which cards carry the label, archived ones included. Trello emits
+		// no activity for label attachment, and the delete strips the label from
+		// every card's own record, so this is the only moment the attachment set
+		// exists anywhere. Read it before mutating: a failure here must abort the
+		// delete rather than produce an unrecoverable half-restore.
+		carriers, err := c.cardsWithLabel(boardID, args[0])
+		if err != nil {
+			return err
+		}
 		if err := c.request(http.MethodDelete, "/labels/"+url.PathEscape(args[0]), nil, nil); err != nil {
 			return err
 		}
-		result = map[string]any{"deleted_label": compactLabel(label)}
+		deleted := map[string]any{"deleted_label": compactLabel(label), "detached_cards": carriers, "detached_card_count": len(carriers)}
+		// Trello's own uses count is reported alongside for comparison: a mismatch
+		// means something carried the label that this read could not see, and after
+		// the delete that gap can never be closed.
+		if uses, ok := label["uses"]; ok {
+			deleted["reported_uses"] = uses
+		}
+		result = deleted
 	default:
 		return fmt.Errorf("%s is registered but not implemented yet", d.Name())
 	}
@@ -1349,6 +1369,25 @@ func (c *Client) listCards(listID, filter string) ([]map[string]any, error) {
 		}
 	}
 	return cards, nil
+}
+
+// cardsWithLabel reports every card carrying labelID, archived cards included,
+// because a board label detaches from archived cards exactly as it does from
+// open ones. It deliberately reports identity rather than a full card record:
+// card label add needs only the ID, and a record carrying idList would render as
+// a workflow card table, which hides the ID this exists to supply.
+func (c *Client) cardsWithLabel(boardID, labelID string) ([]map[string]any, error) {
+	cards, err := c.boardCards(boardID, "all")
+	if err != nil {
+		return nil, err
+	}
+	carrying := make([]map[string]any, 0, len(cards))
+	for _, card := range cards {
+		if hasLabel(card, labelID) {
+			carrying = append(carrying, selectFields(card, "id", "name", "closed"))
+		}
+	}
+	return carrying, nil
 }
 
 func (c *Client) boardLists(boardID, filter string) ([]map[string]any, error) {

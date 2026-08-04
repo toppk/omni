@@ -142,9 +142,21 @@ supplied change; an omitted `--name` or `--color` is left alone.
 
 `delete trello label delete LABEL_ID` deletes the label from the board itself,
 which removes it from every card that carried it, archived cards included. That
-deletion is irreversible, so Omni reads the label first and reports its board,
-name, and color in the response; recreating an equivalent label with `create
-trello label create` yields a new ID and reattaches it to nothing. Labels are
+deletion is irreversible, so Omni reads the label *and every card carrying it*
+first, and reports both.
+
+Recording the cards is not a convenience. Trello writes no activity entry when a
+label is attached to a card, so the only evidence a label was ever used is the
+cards' own label arrays and Trello's `uses` count — and the delete destroys the
+first while the second disappears with the label. Nothing anywhere can
+reconstruct the attachment set afterwards, from any source. The response is
+therefore a complete restore recipe: recreate the label with `create trello label
+create`, then reattach it with `update trello card label add` using the reported
+card IDs. The new label has a new ID and starts attached to nothing.
+
+Trello's `uses` count is reported next to the recorded cards so the two can be
+compared. If they disagree, something carried the label that Omni could not see,
+and that is the last moment the discrepancy is observable. Labels are
 board state rather than card state, so no archive guard applies.
 
 Label colors are a fixed palette: the hues `green`, `yellow`, `orange`, `red`,

@@ -361,6 +361,11 @@ func TestLabelDeleteRecordsLabelIdentityBeforeDeleting(t *testing.T) {
 			}
 			return jsonResponse(r, `{"id":"label-1","idBoard":"board-1","name":"Blocked","color":"red","uses":4}`), nil
 		case 2:
+			if r.Method != http.MethodGet || r.URL.Path != "/boards/board-1/cards/all" {
+				t.Fatalf("carrier read = %s %s", r.Method, r.URL.Path)
+			}
+			return jsonResponse(r, `[{"id":"card-1","name":"Open","idList":"list-1","closed":false,"labels":[{"id":"label-1"}]}]`), nil
+		case 3:
 			if r.Method != http.MethodDelete || r.URL.Path != "/labels/label-1" {
 				t.Fatalf("label delete = %s %s", r.Method, r.URL.Path)
 			}
@@ -375,8 +380,8 @@ func TestLabelDeleteRecordsLabelIdentityBeforeDeleting(t *testing.T) {
 	if err := ExecuteWithFormat(d, []string{"label-1"}, config.TrelloCredentials{}, config.TrelloSettings{APIURL: "https://example.test"}, output.JSON, out); err != nil {
 		t.Fatal(err)
 	}
-	if requests != 2 {
-		t.Fatalf("requests = %d, want 2", requests)
+	if requests != 3 {
+		t.Fatalf("requests = %d, want 3", requests)
 	}
 	var payload struct {
 		DeletedLabel map[string]any `json:"deleted_label"`
@@ -397,8 +402,11 @@ func TestLabelDeleteRecordsLabelIdentityBeforeDeleting(t *testing.T) {
 
 func TestLabelDeleteReportsColorlessLabelVisiblyAndRecreatably(t *testing.T) {
 	stubExecuteClient(t, func(r *http.Request) (*http.Response, error) {
-		if r.Method == http.MethodGet {
+		switch {
+		case r.URL.Path == "/labels/label-1" && r.Method == http.MethodGet:
 			return jsonResponse(r, `{"id":"label-1","idBoard":"board-1","name":"sylvanus","color":null}`), nil
+		case r.URL.Path == "/boards/board-1/cards/all":
+			return jsonResponse(r, `[]`), nil
 		}
 		return jsonResponse(r, `{}`), nil
 	})
@@ -562,6 +570,94 @@ func TestCardListOpenScopeKeepsTheSingleListRequest(t *testing.T) {
 	}
 	if requests != 1 {
 		t.Fatalf("requests = %d, want 1", requests)
+	}
+}
+
+func TestLabelDeleteRecordsEveryCardCarryingTheLabelIncludingArchived(t *testing.T) {
+	deleted := false
+	stubExecuteClient(t, func(r *http.Request) (*http.Response, error) {
+		switch {
+		case r.URL.Path == "/labels/label-1" && r.Method == http.MethodGet:
+			return jsonResponse(r, `{"id":"label-1","idBoard":"board-1","name":"sylvanus","color":"red","uses":3}`), nil
+		case r.URL.Path == "/boards/board-1/cards/all":
+			if deleted {
+				t.Fatal("carriers were read after the label was already deleted")
+			}
+			return jsonResponse(r, `[
+				{"id":"card-1","name":"Open work","idList":"list-1","closed":false,"labels":[{"id":"label-1"},{"id":"label-9"}]},
+				{"id":"card-2","name":"Archived work","idList":"list-2","closed":true,"labels":[{"id":"label-1"}]},
+				{"id":"card-3","name":"Unlabelled","idList":"list-1","closed":false,"labels":[{"id":"label-9"}]}]`), nil
+		case r.URL.Path == "/labels/label-1" && r.Method == http.MethodDelete:
+			deleted = true
+			return jsonResponse(r, `{}`), nil
+		}
+		t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		return nil, nil
+	})
+	d, _ := command.Find([]string{"delete", "trello", "label", "delete"})
+	out := &bytes.Buffer{}
+	if err := ExecuteWithFormat(d, []string{"label-1"}, config.TrelloCredentials{}, config.TrelloSettings{APIURL: "https://example.test"}, output.JSON, out); err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		DetachedCards []map[string]any `json:"detached_cards"`
+		Count         int              `json:"detached_card_count"`
+		ReportedUses  float64          `json:"reported_uses"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	// The archived carrier is the one no other read would surface, and it loses
+	// the label just as the open one does.
+	if payload.Count != 2 || len(payload.DetachedCards) != 2 {
+		t.Fatalf("detached cards = %#v", payload.DetachedCards)
+	}
+	if payload.DetachedCards[1]["id"] != "card-2" || payload.DetachedCards[1]["closed"] != true {
+		t.Fatalf("archived carrier not recorded: %#v", payload.DetachedCards)
+	}
+	// The ID needed to reattach the recreated label must be present, and must
+	// survive text rendering: a record carrying idList renders as a card table,
+	// which omits the ID entirely.
+	if payload.DetachedCards[0]["id"] != "card-1" || payload.DetachedCards[0]["name"] != "Open work" {
+		t.Fatalf("restore recipe incomplete: %#v", payload.DetachedCards[0])
+	}
+	if _, ok := payload.DetachedCards[0]["idList"]; ok {
+		t.Fatalf("carrier record would render as a card table and hide its ID: %#v", payload.DetachedCards[0])
+	}
+	// Trello said 3, Omni saw 2: the discrepancy is observable exactly once.
+	if payload.ReportedUses != 3 {
+		t.Fatalf("reported uses = %v, want Trello's own count for comparison", payload.ReportedUses)
+	}
+}
+
+func TestLabelDeleteAbortsWhenCarriersCannotBeRecorded(t *testing.T) {
+	stubExecuteClient(t, func(r *http.Request) (*http.Response, error) {
+		switch {
+		case r.URL.Path == "/labels/label-1" && r.Method == http.MethodGet:
+			return jsonResponse(r, `{"id":"label-1","idBoard":"board-1","name":"sylvanus","color":"red"}`), nil
+		case r.URL.Path == "/boards/board-1/cards/all":
+			return &http.Response{StatusCode: http.StatusForbidden, Status: "403 Forbidden", Body: io.NopCloser(bytes.NewBufferString("nope")), Request: r}, nil
+		case r.Method == http.MethodDelete:
+			t.Fatal("label was deleted without recording the cards carrying it")
+		}
+		return nil, nil
+	})
+	d, _ := command.Find([]string{"delete", "trello", "label", "delete"})
+	if err := Execute(d, []string{"label-1"}, config.TrelloCredentials{}, config.TrelloSettings{APIURL: "https://example.test"}, &bytes.Buffer{}); err == nil {
+		t.Fatal("expected the delete to abort when carriers cannot be read")
+	}
+}
+
+func TestLabelDeleteRefusesLabelWithoutBoardIdentity(t *testing.T) {
+	stubExecuteClient(t, func(r *http.Request) (*http.Response, error) {
+		if r.Method == http.MethodDelete {
+			t.Fatal("label was deleted without a board to enumerate carriers from")
+		}
+		return jsonResponse(r, `{"id":"label-1","name":"sylvanus","color":"red"}`), nil
+	})
+	d, _ := command.Find([]string{"delete", "trello", "label", "delete"})
+	if err := Execute(d, []string{"label-1"}, config.TrelloCredentials{}, config.TrelloSettings{APIURL: "https://example.test"}, &bytes.Buffer{}); err == nil {
+		t.Fatal("expected a label without idBoard to be refused")
 	}
 }
 
