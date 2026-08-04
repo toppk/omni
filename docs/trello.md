@@ -53,9 +53,9 @@ omni configure set trello.default-board-id BOARD_ID
 ## Output and archive safety
 
 Board overview returns board identity, description, short URL, and each list's
-ID and name. To resolve or manage labels, use `observe trello label list
-BOARD_ID`: its records include the usable label ID, color, and name, and
-`observe trello label color list` enumerates every color a label operation
+ID, name, and archive state. To resolve or manage labels, use `observe trello
+label list BOARD_ID`: its records include the usable label ID, color, and name,
+and `observe trello label color list` enumerates every color a label operation
 accepts without calling Trello. Card
 observation returns the fields used for ordinary workflow work: identity, list
 and position,
@@ -77,6 +77,45 @@ Card search scans the selected board before applying its output limit. Its
 response includes `matched` and `truncated`, so a bounded result cannot look
 complete. Use `label:NAME` to search by one board label name; an unknown label
 name is rejected rather than treated as an empty result.
+
+A `label:` query is a whole query, not one term among several. Everything after
+`label:` is the label name, because Trello label names may themselves contain
+spaces and colons, so `label:sylvanus is:archived` searches for a label named
+`sylvanus is:archived` and is rejected as unknown. Omni recognizes that shape and
+says so in the error rather than reporting a bare unknown label. Archive
+filtering is a separate option, not a query term.
+
+## Archived visibility
+
+Board reads are open-only by default, which understates the truth whenever
+something is being retired. Four reads accept `--scope open|archived|all` and
+each reports the scope it used, so an open-only result cannot be mistaken for a
+complete one:
+
+```bash
+omni observe trello card search "label:sylvanus" --scope all   # cards, by text or label
+omni observe trello card list LIST_ID --scope archived         # cards in one list
+omni observe trello list list --scope all                      # lists on the board
+omni observe trello board overview --scope all                 # board and its lists
+```
+
+Archived scopes read Trello's documented board-level filtered routes. For cards
+that also reaches cards sitting in archived lists; search annotates those with
+the archived list's own record, so a card is never attributed to a bare list ID.
+Every list record carries `closed`, so an archived list stays distinguishable
+from an open one inside a mixed `--scope all` result.
+
+Card and list scopes are independent, and both directions matter. Without list
+scope an archived list is only discoverable indirectly, as the annotation on a
+card that happens to match a search, and a board's archived lists cannot be
+enumerated at all. Without card scope an archived card is invisible even in a
+list you already know about.
+
+This matters before any board-level removal. Trello's `uses` count on a label
+record includes cards an open-only read never shows, so it cannot be reconciled
+against `card search` results, and once the label is deleted it cannot be
+reconciled at all. Audit first with `observe trello card search label:NAME
+--scope all`, and treat `uses` as a hint rather than an inventory.
 
 Card creation accepts repeatable `--label LABEL_ID` and `--member MEMBER_ID`
 options. Omni verifies every requested ID against the destination board before
@@ -122,6 +161,13 @@ unarchive are each other's explicit reversal paths.
 Card creation and list name/position changes likewise refuse archived lists.
 Restore the list explicitly with `update trello list unarchive LIST_ID` before
 adding cards or changing its metadata.
+
+This refusal is Omni policy, not a Trello constraint: Trello itself accepts a
+rename on a closed list, and board activity from before the guard existed shows
+it succeeding. Omni requires the unarchive to be deliberate so that changing a
+retired list cannot be mistaken for changing a live one. The cost is that
+renaming an archived list takes three mutations through Omni — unarchive,
+rename, archive — with the list briefly live on the board in between.
 
 ## MVP capabilities
 

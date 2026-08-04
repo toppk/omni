@@ -235,38 +235,54 @@ func ExecuteWithFormat(d command.Definition, args []string, creds config.TrelloC
 		}
 		result = map[string]any{"boards": boards}
 	case "observe trello board overview":
-		boardID, err := boardID(args, settings.DefaultBoardID, d.Name())
+		boardID, fields, err := boardOptions(args, settings.DefaultBoardID, d.Name(), "scope")
+		if err != nil {
+			return err
+		}
+		filter, err := archiveScope(fields["scope"])
 		if err != nil {
 			return err
 		}
 		var board map[string]any
-		var lists []map[string]any
 		if err := c.request(http.MethodGet, "/boards/"+url.PathEscape(boardID), nil, &board); err != nil {
 			return err
 		}
-		if err := c.request(http.MethodGet, "/boards/"+url.PathEscape(boardID)+"/lists", nil, &lists); err != nil {
-			return err
-		}
-		result = map[string]any{"board": compactBoard(board), "lists": compactLists(lists)}
-	case "observe trello list list":
-		boardID, err := boardID(args, settings.DefaultBoardID, d.Name())
+		lists, err := c.boardLists(boardID, filter)
 		if err != nil {
 			return err
 		}
-		var lists []map[string]any
-		if err := c.request(http.MethodGet, "/boards/"+url.PathEscape(boardID)+"/lists", nil, &lists); err != nil {
+		result = map[string]any{"board": compactBoard(board), "lists": compactLists(lists), "scope": scopeName(filter)}
+	case "observe trello list list":
+		boardID, fields, err := boardOptions(args, settings.DefaultBoardID, d.Name(), "scope")
+		if err != nil {
 			return err
 		}
-		result = map[string]any{"lists": compactLists(lists)}
+		filter, err := archiveScope(fields["scope"])
+		if err != nil {
+			return err
+		}
+		lists, err := c.boardLists(boardID, filter)
+		if err != nil {
+			return err
+		}
+		result = map[string]any{"lists": compactLists(lists), "scope": scopeName(filter)}
 	case "observe trello card list":
-		if err := exact(args, 1, d.Name()); err != nil {
+		if len(args) < 1 {
+			return fmt.Errorf("%s requires LIST_ID", d.Name())
+		}
+		fields, err := named(args[1:], "scope")
+		if err != nil {
 			return err
 		}
-		var cards []map[string]any
-		if err := c.requestWithQuery(http.MethodGet, "/lists/"+url.PathEscape(args[0])+"/cards", map[string]string{"members": "true", "member_fields": "initials,username"}, nil, &cards); err != nil {
+		filter, err := archiveScope(fields["scope"])
+		if err != nil {
 			return err
 		}
-		result = map[string]any{"cards": compactCards(cards)}
+		cards, err := c.listCards(args[0], filter)
+		if err != nil {
+			return err
+		}
+		result = map[string]any{"cards": compactCards(cards), "scope": scopeName(filter)}
 	case "observe trello card get":
 		if err := exact(args, 1, d.Name()); err != nil {
 			return err
@@ -324,7 +340,7 @@ func ExecuteWithFormat(d command.Definition, args []string, creds config.TrelloC
 		if len(args) < 1 {
 			return fmt.Errorf("%s requires QUERY", d.Name())
 		}
-		fields, err := named(args[1:], "board", "limit")
+		fields, err := named(args[1:], "board", "limit", "scope")
 		if err != nil {
 			return err
 		}
@@ -339,11 +355,15 @@ func ExecuteWithFormat(d command.Definition, args []string, creds config.TrelloC
 		if err != nil {
 			return err
 		}
-		cards, searched, matched, err := c.searchCards(boardID, args[0], limit)
+		filter, err := archiveScope(fields["scope"])
 		if err != nil {
 			return err
 		}
-		result = map[string]any{"cards": cards, "query": args[0], "searched": searched, "matched": matched, "limit": limit, "truncated": matched > len(cards)}
+		cards, searched, matched, err := c.searchCards(boardID, args[0], limit, filter)
+		if err != nil {
+			return err
+		}
+		result = map[string]any{"cards": cards, "query": args[0], "scope": scopeName(filter), "searched": searched, "matched": matched, "limit": limit, "truncated": matched > len(cards)}
 	case "observe trello checklist list":
 		if err := exact(args, 1, d.Name()); err != nil {
 			return err
@@ -1123,7 +1143,9 @@ func (c *Client) validateCardAssignments(boardID string, labels, members []strin
 func compactLists(lists []map[string]any) []map[string]any {
 	compact := make([]map[string]any, len(lists))
 	for i, list := range lists {
-		compact[i] = selectFields(list, "id", "name")
+		// closed travels with every list record: an archived list returned by a
+		// wider scope has to be distinguishable from an open one.
+		compact[i] = selectFields(list, "id", "name", "closed")
 	}
 	return compact
 }
@@ -1277,7 +1299,84 @@ func compactCardActions(actions []map[string]any) []map[string]any {
 	return compact
 }
 
-func (c *Client) searchCards(boardID, query string, limit int) ([]map[string]any, int, int, error) {
+// compoundQueryTerm reports a trailing FILTER:VALUE term inside a label name.
+// Trello label names may contain spaces and colons, so label: cannot split its
+// remainder into terms; an operator who writes a compound query gets the filter
+// silently absorbed into the name, and this makes the failure say so.
+func compoundQueryTerm(labelName string) (string, bool) {
+	terms := strings.Fields(labelName)
+	if len(terms) < 2 {
+		return "", false
+	}
+	last := terms[len(terms)-1]
+	if colon := strings.Index(last, ":"); colon > 0 && colon < len(last)-1 {
+		return last, true
+	}
+	return "", false
+}
+
+// cardQuery is the card projection every card read shares, so archived and open
+// reads return the same member detail.
+var cardQuery = map[string]string{"members": "true", "member_fields": "initials,username"}
+
+// listCards reads one list's cards in the requested scope. Trello's list-cards
+// route documents no filter, so anything beyond open cards is read through the
+// board's documented filtered card route and narrowed to this list.
+func (c *Client) listCards(listID, filter string) ([]map[string]any, error) {
+	if filter == "open" {
+		var cards []map[string]any
+		if err := c.requestWithQuery(http.MethodGet, "/lists/"+url.PathEscape(listID)+"/cards", cardQuery, nil, &cards); err != nil {
+			return nil, err
+		}
+		return cards, nil
+	}
+	var list map[string]any
+	if err := c.request(http.MethodGet, "/lists/"+url.PathEscape(listID), nil, &list); err != nil {
+		return nil, err
+	}
+	boardID, _ := list["idBoard"].(string)
+	if boardID == "" {
+		return nil, fmt.Errorf("Trello list %s did not include its board ID for an archived card read", listID)
+	}
+	boardCards, err := c.boardCards(boardID, filter)
+	if err != nil {
+		return nil, err
+	}
+	cards := make([]map[string]any, 0, len(boardCards))
+	for _, card := range boardCards {
+		if id, _ := card["idList"].(string); id == listID {
+			cards = append(cards, card)
+		}
+	}
+	return cards, nil
+}
+
+func (c *Client) boardLists(boardID, filter string) ([]map[string]any, error) {
+	var lists []map[string]any
+	if err := c.request(http.MethodGet, "/boards/"+url.PathEscape(boardID)+"/lists/"+url.PathEscape(filter), nil, &lists); err != nil {
+		return nil, err
+	}
+	return lists, nil
+}
+
+func (c *Client) boardCards(boardID, filter string) ([]map[string]any, error) {
+	var cards []map[string]any
+	if err := c.requestWithQuery(http.MethodGet, "/boards/"+url.PathEscape(boardID)+"/cards/"+url.PathEscape(filter), cardQuery, nil, &cards); err != nil {
+		return nil, err
+	}
+	return cards, nil
+}
+
+// scopeName reports the scope back in the operator's vocabulary, so an
+// open-only result cannot be mistaken for a complete one.
+func scopeName(filter string) string {
+	if filter == "closed" {
+		return "archived"
+	}
+	return filter
+}
+
+func (c *Client) searchCards(boardID, query string, limit int, filter string) ([]map[string]any, int, int, error) {
 	needle := strings.ToLower(query)
 	labelID := ""
 	if strings.HasPrefix(needle, "label:") {
@@ -1293,39 +1392,51 @@ func (c *Client) searchCards(boardID, query string, limit int) ([]map[string]any
 			}
 		}
 		if labelID == "" {
+			if term, compound := compoundQueryTerm(labelName); compound {
+				return nil, 0, 0, fmt.Errorf("Trello label %q is not on board %s; label: takes the whole rest of the query as one label name, so %q was read as part of it. Search one label at a time, and use --scope open|archived|all for archive filtering", labelName, boardID, term)
+			}
 			return nil, 0, 0, fmt.Errorf("Trello label %q is not on board %s", labelName, boardID)
 		}
 		needle = ""
 	}
-	var lists []map[string]any
-	if err := c.request(http.MethodGet, "/boards/"+url.PathEscape(boardID)+"/lists", nil, &lists); err != nil {
+	// Read every list, including archived ones, so an archived card can still be
+	// attributed to a named list rather than a bare ID.
+	lists, err := c.boardLists(boardID, "all")
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	byList := map[string]map[string]any{}
+	for _, list := range lists {
+		if id, _ := list["id"].(string); id != "" {
+			byList[id] = list
+		}
+	}
+	cards, err := c.boardCards(boardID, filter)
+	if err != nil {
 		return nil, 0, 0, err
 	}
 	results := make([]map[string]any, 0, limit)
-	searched := 0
+	searched := len(cards)
 	matched := 0
-	for _, list := range lists {
-		listID, _ := list["id"].(string)
-		var cards []map[string]any
-		if err := c.requestWithQuery(http.MethodGet, "/lists/"+url.PathEscape(listID)+"/cards", map[string]string{"members": "true", "member_fields": "initials,username"}, nil, &cards); err != nil {
-			return nil, searched, matched, err
+	for _, card := range cards {
+		name, _ := card["name"].(string)
+		description, _ := card["desc"].(string)
+		if labelID != "" && !hasLabel(card, labelID) {
+			continue
 		}
-		searched += len(cards)
-		for _, card := range cards {
-			name, _ := card["name"].(string)
-			description, _ := card["desc"].(string)
-			if labelID != "" && !hasLabel(card, labelID) {
-				continue
-			}
-			if needle != "" && !strings.Contains(strings.ToLower(name+" "+description), needle) {
-				continue
-			}
-			matched++
-			if len(results) < limit {
-				entry := compactCard(card)
+		if needle != "" && !strings.Contains(strings.ToLower(name+" "+description), needle) {
+			continue
+		}
+		matched++
+		if len(results) < limit {
+			entry := compactCard(card)
+			listID, _ := card["idList"].(string)
+			if list, ok := byList[listID]; ok {
 				entry["list"] = compactList(list)
-				results = append(results, entry)
+			} else {
+				entry["list"] = map[string]any{"id": listID}
 			}
+			results = append(results, entry)
 		}
 	}
 	return results, searched, matched, nil
@@ -1408,6 +1519,23 @@ func contains(values []string, want string) bool {
 	return false
 }
 
+// archiveScope maps Omni's scope option onto the archive filter Trello's board
+// card and list routes share. Archived cards and lists are invisible to
+// open-only reads, which silently understates what a board actually contains
+// when auditing before a deletion.
+func archiveScope(value string) (string, error) {
+	switch strings.ToLower(value) {
+	case "", "open":
+		return "open", nil
+	case "archived":
+		return "closed", nil
+	case "all":
+		return "all", nil
+	default:
+		return "", fmt.Errorf("--scope must be open, archived, or all")
+	}
+}
+
 func positiveInt(value string, fallback int, option string) (int, error) {
 	if value == "" {
 		return fallback, nil
@@ -1438,6 +1566,27 @@ func selectFields(record map[string]any, names ...string) map[string]any {
 		}
 	}
 	return selected
+}
+
+// boardOptions splits an optional BOARD_ID from the named options that follow
+// it, so a board read can default its board and still take options.
+func boardOptions(args []string, fallback, name string, allowed ...string) (string, map[string]string, error) {
+	positional := len(args)
+	for i, arg := range args {
+		if strings.HasPrefix(arg, "--") {
+			positional = i
+			break
+		}
+	}
+	fields, err := named(args[positional:], allowed...)
+	if err != nil {
+		return "", nil, err
+	}
+	id, err := boardID(args[:positional], fallback, name)
+	if err != nil {
+		return "", nil, err
+	}
+	return id, fields, nil
 }
 
 func boardID(args []string, fallback, name string) (string, error) {

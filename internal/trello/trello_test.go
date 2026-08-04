@@ -395,17 +395,6 @@ func TestLabelDeleteRecordsLabelIdentityBeforeDeleting(t *testing.T) {
 	}
 }
 
-func TestLabelDeleteRejectsMissingLabelIDWithoutRequests(t *testing.T) {
-	stubExecuteClient(t, func(r *http.Request) (*http.Response, error) {
-		t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
-		return nil, nil
-	})
-	d, _ := command.Find([]string{"delete", "trello", "label", "delete"})
-	if err := Execute(d, nil, config.TrelloCredentials{}, config.TrelloSettings{APIURL: "https://example.test"}, &bytes.Buffer{}); err == nil {
-		t.Fatal("expected an error when LABEL_ID is missing")
-	}
-}
-
 func TestLabelDeleteReportsColorlessLabelVisiblyAndRecreatably(t *testing.T) {
 	stubExecuteClient(t, func(r *http.Request) (*http.Response, error) {
 		if r.Method == http.MethodGet {
@@ -522,6 +511,329 @@ func TestLabelSetNormalizesShadeAndRequiresOneField(t *testing.T) {
 	}
 }
 
+func TestCardListScopeReadsArchivedCardsThroughBoardFilter(t *testing.T) {
+	paths := []string{}
+	stubExecuteClient(t, func(r *http.Request) (*http.Response, error) {
+		paths = append(paths, r.URL.Path)
+		switch r.URL.Path {
+		case "/lists/list-1":
+			return jsonResponse(r, `{"id":"list-1","idBoard":"board-1","name":"Doing"}`), nil
+		case "/boards/board-1/cards/closed":
+			return jsonResponse(r, `[{"id":"card-1","idList":"list-1","name":"Archived","closed":true},{"id":"card-2","idList":"list-9","name":"Elsewhere","closed":true}]`), nil
+		default:
+			t.Fatalf("unexpected request %s", r.URL.Path)
+			return nil, nil
+		}
+	})
+	d, _ := command.Find([]string{"observe", "trello", "card", "list"})
+	out := &bytes.Buffer{}
+	if err := ExecuteWithFormat(d, []string{"list-1", "--scope", "archived"}, config.TrelloCredentials{}, config.TrelloSettings{APIURL: "https://example.test"}, output.JSON, out); err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		Cards []map[string]any `json:"cards"`
+		Scope string           `json:"scope"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	// Only this list's cards, and the scope is reported so an archived-only read
+	// cannot be mistaken for the whole list.
+	if len(payload.Cards) != 1 || payload.Cards[0]["id"] != "card-1" || payload.Scope != "archived" {
+		t.Fatalf("payload = %#v", payload)
+	}
+	if len(paths) != 2 {
+		t.Fatalf("requests = %v", paths)
+	}
+}
+
+func TestCardListOpenScopeKeepsTheSingleListRequest(t *testing.T) {
+	requests := 0
+	stubExecuteClient(t, func(r *http.Request) (*http.Response, error) {
+		requests++
+		if r.URL.Path != "/lists/list-1/cards" {
+			t.Fatalf("open card list = %s", r.URL.Path)
+		}
+		return jsonResponse(r, `[{"id":"card-1","idList":"list-1","name":"Open"}]`), nil
+	})
+	d, _ := command.Find([]string{"observe", "trello", "card", "list"})
+	if err := Execute(d, []string{"list-1"}, config.TrelloCredentials{}, config.TrelloSettings{APIURL: "https://example.test"}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want 1", requests)
+	}
+}
+
+func TestLabelDeleteRejectsMissingLabelIDWithoutRequests(t *testing.T) {
+	stubExecuteClient(t, func(r *http.Request) (*http.Response, error) {
+		t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		return nil, nil
+	})
+	d, _ := command.Find([]string{"delete", "trello", "label", "delete"})
+	if err := Execute(d, nil, config.TrelloCredentials{}, config.TrelloSettings{APIURL: "https://example.test"}, &bytes.Buffer{}); err == nil {
+		t.Fatal("expected an error when LABEL_ID is missing")
+	}
+}
+
+func stubExecuteClient(t *testing.T, handler roundTripper) {
+	t.Helper()
+	previous := makeClient
+	makeClient = func(creds config.TrelloCredentials) *Client {
+		client := NewClient(creds)
+		client.baseURL = "https://example.test"
+		client.http = &http.Client{Transport: handler}
+		return client
+	}
+	t.Cleanup(func() { makeClient = previous })
+}
+
+func TestCompactCardKeepsWorkflowAndChecklistProgress(t *testing.T) {
+	card := compactCard(map[string]any{
+		"id": "card-1", "name": "Plan", "idList": "list-1", "closed": false,
+		"idChecklists": []any{"checklist-1"}, "url": "unneeded", "cover": map[string]any{},
+		"badges": map[string]any{
+			"checkItems": 4, "checkItemsChecked": 2, "comments": 1,
+			"lastUpdatedByAi": true, "attachmentsByType": map[string]any{},
+		},
+	})
+	if got := card["idChecklists"]; got == nil {
+		t.Fatal("idChecklists was dropped")
+	}
+	badges, ok := card["badges"].(map[string]any)
+	if !ok || badges["checkItems"] != 4 || badges["checkItemsChecked"] != 2 || badges["comments"] != 1 {
+		t.Fatalf("badges = %#v", card["badges"])
+	}
+	if _, ok := badges["lastUpdatedByAi"]; ok {
+		t.Fatalf("badges retains provider noise: %#v", badges)
+	}
+	if _, ok := card["url"]; ok {
+		t.Fatalf("card retains duplicate URL: %#v", card)
+	}
+}
+
+func TestCompactListsKeepsIdentityAndArchiveState(t *testing.T) {
+	lists := compactLists([]map[string]any{
+		{"id": "list-1", "name": "Doing", "closed": false, "color": "blue"},
+		{"id": "list-2", "name": "📋 BACKLOG - Medium Priority", "closed": true, "color": "blue"},
+	})
+	if got := lists[0]; len(got) != 3 || got["id"] != "list-1" || got["name"] != "Doing" || got["closed"] != false {
+		t.Fatalf("open list = %#v", got)
+	}
+	// An archived list in a mixed result must be distinguishable from an open one.
+	if got := lists[1]; got["closed"] != true {
+		t.Fatalf("archived list = %#v", got)
+	}
+	if _, ok := lists[0]["color"]; ok {
+		t.Fatalf("list retains provider noise: %#v", lists[0])
+	}
+}
+
+func TestListListScopeEnumeratesArchivedListsDirectly(t *testing.T) {
+	paths := []string{}
+	stubExecuteClient(t, func(r *http.Request) (*http.Response, error) {
+		paths = append(paths, r.URL.Path)
+		return jsonResponse(r, `[{"id":"list-1","name":"Doing","closed":false},{"id":"list-2","name":"📋 BACKLOG - Medium Priority","closed":true}]`), nil
+	})
+	d, _ := command.Find([]string{"observe", "trello", "list", "list"})
+	out := &bytes.Buffer{}
+	if err := ExecuteWithFormat(d, []string{"board-1", "--scope", "all"}, config.TrelloCredentials{}, config.TrelloSettings{APIURL: "https://example.test"}, output.JSON, out); err != nil {
+		t.Fatal(err)
+	}
+	if len(paths) != 1 || paths[0] != "/boards/board-1/lists/all" {
+		t.Fatalf("requests = %v", paths)
+	}
+	var payload struct {
+		Lists []map[string]any `json:"lists"`
+		Scope string           `json:"scope"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Scope != "all" || len(payload.Lists) != 2 || payload.Lists[1]["closed"] != true {
+		t.Fatalf("payload = %#v", payload)
+	}
+}
+
+func TestListListDefaultsToOpenScopeAndTakesBoardFromSettings(t *testing.T) {
+	paths := []string{}
+	stubExecuteClient(t, func(r *http.Request) (*http.Response, error) {
+		paths = append(paths, r.URL.Path)
+		return jsonResponse(r, `[{"id":"list-1","name":"Doing","closed":false}]`), nil
+	})
+	d, _ := command.Find([]string{"observe", "trello", "list", "list"})
+	settings := config.TrelloSettings{APIURL: "https://example.test", DefaultBoardID: "board-default"}
+	// The option must not be mistaken for the optional BOARD_ID argument.
+	if err := Execute(d, []string{"--scope", "archived"}, config.TrelloCredentials{}, settings, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Execute(d, nil, config.TrelloCredentials{}, settings, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(paths) != 2 || paths[0] != "/boards/board-default/lists/closed" || paths[1] != "/boards/board-default/lists/open" {
+		t.Fatalf("requests = %v", paths)
+	}
+	if err := Execute(d, []string{"board-1", "--scope", "sideways"}, config.TrelloCredentials{}, settings, &bytes.Buffer{}); err == nil {
+		t.Fatal("expected an unknown scope to be rejected")
+	}
+	if err := Execute(d, []string{"board-1", "board-2"}, config.TrelloCredentials{}, settings, &bytes.Buffer{}); err == nil {
+		t.Fatal("expected a second positional argument to be rejected")
+	}
+}
+
+func TestBoardOverviewScopeIncludesArchivedLists(t *testing.T) {
+	paths := []string{}
+	stubExecuteClient(t, func(r *http.Request) (*http.Response, error) {
+		paths = append(paths, r.URL.Path)
+		if r.URL.Path == "/boards/board-1" {
+			return jsonResponse(r, `{"id":"board-1","name":"Board","desc":"","shortUrl":"https://trello.com/b/x"}`), nil
+		}
+		return jsonResponse(r, `[{"id":"list-2","name":"Retired","closed":true}]`), nil
+	})
+	d, _ := command.Find([]string{"observe", "trello", "board", "overview"})
+	out := &bytes.Buffer{}
+	if err := ExecuteWithFormat(d, []string{"board-1", "--scope", "archived"}, config.TrelloCredentials{}, config.TrelloSettings{APIURL: "https://example.test"}, output.JSON, out); err != nil {
+		t.Fatal(err)
+	}
+	if len(paths) != 2 || paths[1] != "/boards/board-1/lists/closed" {
+		t.Fatalf("requests = %v", paths)
+	}
+	if !strings.Contains(out.String(), `"scope":"archived"`) {
+		t.Fatalf("overview did not report its list scope: %s", out.String())
+	}
+}
+
+func TestCompactBoardOmitsLabelNamesAndPreferences(t *testing.T) {
+	board := compactBoard(map[string]any{
+		"id": "board-1", "name": "Project", "desc": "Plan", "shortUrl": "https://trello.com/b/x",
+		"labelNames": map[string]any{"green": "review"},
+		"prefs":      map[string]any{"backgroundImageScaled": []any{}},
+		"url":        "https://trello.com/b/x",
+		"closed":     false,
+	})
+	if _, ok := board["labelNames"]; ok {
+		t.Fatalf("board retains redundant label names: %#v", board)
+	}
+	if _, ok := board["prefs"]; ok {
+		t.Fatalf("board retains preferences: %#v", board)
+	}
+	if _, ok := board["url"]; ok {
+		t.Fatalf("board retains duplicate URL: %#v", board)
+	}
+}
+
+func TestCompactChecklistsKeepsItemsAndStates(t *testing.T) {
+	checklists := compactChecklists([]map[string]any{{
+		"id": "checklist-1", "idCard": "card-1", "name": "Ship", "pos": 1,
+		"checkItems": []any{map[string]any{"id": "item-1", "name": "Test", "state": "complete", "pos": 2, "nameData": map[string]any{}}},
+	}})
+	items, ok := checklists[0]["items"].([]map[string]any)
+	if !ok || len(items) != 1 || items[0]["state"] != "complete" || items[0]["name"] != "Test" {
+		t.Fatalf("checklists = %#v", checklists)
+	}
+	if _, ok := items[0]["nameData"]; ok {
+		t.Fatalf("item retains provider noise: %#v", items[0])
+	}
+}
+
+func TestCompactCommentKeepsReactionIdentity(t *testing.T) {
+	comment := compactComment(map[string]any{
+		"id": "comment-1", "data": map[string]any{"text": "Ship it"},
+		"reactions": []any{map[string]any{"id": "reaction-1", "idMember": "member-1", "emoji": map[string]any{"native": "✅"}, "noise": true}},
+	})
+	reactions, ok := comment["reactions"].([]map[string]any)
+	if !ok || len(reactions) != 1 || reactions[0]["id"] != "reaction-1" || reactions[0]["idMember"] != "member-1" || reactions[0]["emoji"] == nil || len(reactions[0]) != 3 {
+		t.Fatalf("reactions = %#v", comment["reactions"])
+	}
+}
+
+func TestSearchCardsStopsAtLimitAndAnnotatesList(t *testing.T) {
+	requests := 0
+	c := NewClient(config.TrelloCredentials{})
+	c.baseURL = "https://example.test"
+	c.http = &http.Client{Transport: roundTripper(func(r *http.Request) (*http.Response, error) {
+		requests++
+		switch r.URL.Path {
+		case "/boards/board-1/lists/all":
+			return jsonResponse(r, `[{"id":"list-1","name":"Ideas"},{"id":"list-2","name":"Done"}]`), nil
+		case "/boards/board-1/cards/open":
+			return jsonResponse(r, `[{"id":"card-1","name":"Ship Omni","desc":"release","idList":"list-1"},{"id":"card-2","name":"Other","desc":"","idList":"list-1"},{"id":"card-3","name":"Other","desc":"","idList":"list-2"}]`), nil
+		default:
+			t.Fatalf("request = %s", r.URL.Path)
+			return nil, nil
+		}
+	})}
+	cards, searched, matched, err := c.searchCards("board-1", "omni", 1, "open")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requests != 2 || searched != 3 || matched != 1 || len(cards) != 1 || cards[0]["id"] != "card-1" {
+		t.Fatalf("requests=%d searched=%d matched=%d cards=%#v", requests, searched, matched, cards)
+	}
+	list, ok := cards[0]["list"].(map[string]any)
+	if !ok || list["id"] != "list-1" || list["name"] != "Ideas" {
+		t.Fatalf("list annotation = %#v", cards[0]["list"])
+	}
+}
+
+func TestSearchCardsScopeReachesArchivedCardsAndArchivedLists(t *testing.T) {
+	c := NewClient(config.TrelloCredentials{})
+	c.baseURL = "https://example.test"
+	c.http = &http.Client{Transport: roundTripper(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Path {
+		case "/boards/board-1/lists/all":
+			return jsonResponse(r, `[{"id":"list-1","name":"Doing","closed":false},{"id":"list-2","name":"Retired","closed":true}]`), nil
+		case "/boards/board-1/cards/all":
+			return jsonResponse(r, `[
+				{"id":"card-1","name":"Open work","idList":"list-1","closed":false,"labels":[{"id":"label-1","name":"sylvanus"}]},
+				{"id":"card-2","name":"Archived work","idList":"list-1","closed":true,"labels":[{"id":"label-1","name":"sylvanus"}]},
+				{"id":"card-3","name":"In retired list","idList":"list-2","closed":false,"labels":[{"id":"label-1","name":"sylvanus"}]},
+				{"id":"card-4","name":"Unlabelled","idList":"list-1","closed":false,"labels":[]}]`), nil
+		case "/boards/board-1/labels":
+			return jsonResponse(r, `[{"id":"label-1","name":"sylvanus","color":null}]`), nil
+		default:
+			t.Fatalf("request = %s", r.URL.Path)
+			return nil, nil
+		}
+	})}
+	cards, searched, matched, err := c.searchCards("board-1", "label:sylvanus", 20, "all")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if searched != 4 || matched != 3 || len(cards) != 3 {
+		t.Fatalf("searched=%d matched=%d cards=%#v", searched, matched, cards)
+	}
+	// The archived card is the one an open-only read misses, and the card in the
+	// archived list must still name that list rather than a bare ID.
+	if cards[1]["id"] != "card-2" {
+		t.Fatalf("archived card missing from all-scope search: %#v", cards)
+	}
+	retired, ok := cards[2]["list"].(map[string]any)
+	if !ok || retired["name"] != "Retired" || retired["closed"] != true {
+		t.Fatalf("archived list annotation = %#v", cards[2]["list"])
+	}
+}
+
+func TestSearchCardsLabelQueryKeepsTheWholeRemainderAsTheName(t *testing.T) {
+	c := NewClient(config.TrelloCredentials{})
+	c.baseURL = "https://example.test"
+	c.http = &http.Client{Transport: roundTripper(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path != "/boards/board-1/labels" {
+			t.Fatalf("unexpected request %s before label resolution", r.URL.Path)
+		}
+		return jsonResponse(r, `[{"id":"label-1","name":"sylvanus"}]`), nil
+	})}
+	_, _, _, err := c.searchCards("board-1", "label:sylvanus is:archived", 20, "open")
+	if err == nil {
+		t.Fatal("expected a compound label query to be rejected")
+	}
+	// The message must quote the value it actually looked for, so a caller can
+	// see the filter was swallowed rather than ignored.
+	if !strings.Contains(err.Error(), `"sylvanus is:archived"`) || !strings.Contains(err.Error(), "--scope") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestLabelColorAcceptsShadesAndColorlessAndRejectsOthers(t *testing.T) {
 	for _, valid := range []struct{ in, want string }{
 		{"green", "green"}, {"GREEN", "green"}, {"sky_subtle", "sky_light"}, {"sky_light", "sky_light"},
@@ -600,121 +912,18 @@ func TestLabelColorListAnswersWithoutCallingTrello(t *testing.T) {
 	}
 }
 
-func stubExecuteClient(t *testing.T, handler roundTripper) {
-	t.Helper()
-	previous := makeClient
-	makeClient = func(creds config.TrelloCredentials) *Client {
-		client := NewClient(creds)
-		client.baseURL = "https://example.test"
-		client.http = &http.Client{Transport: handler}
-		return client
-	}
-	t.Cleanup(func() { makeClient = previous })
-}
-
-func TestCompactCardKeepsWorkflowAndChecklistProgress(t *testing.T) {
-	card := compactCard(map[string]any{
-		"id": "card-1", "name": "Plan", "idList": "list-1", "closed": false,
-		"idChecklists": []any{"checklist-1"}, "url": "unneeded", "cover": map[string]any{},
-		"badges": map[string]any{
-			"checkItems": 4, "checkItemsChecked": 2, "comments": 1,
-			"lastUpdatedByAi": true, "attachmentsByType": map[string]any{},
-		},
-	})
-	if got := card["idChecklists"]; got == nil {
-		t.Fatal("idChecklists was dropped")
-	}
-	badges, ok := card["badges"].(map[string]any)
-	if !ok || badges["checkItems"] != 4 || badges["checkItemsChecked"] != 2 || badges["comments"] != 1 {
-		t.Fatalf("badges = %#v", card["badges"])
-	}
-	if _, ok := badges["lastUpdatedByAi"]; ok {
-		t.Fatalf("badges retains provider noise: %#v", badges)
-	}
-	if _, ok := card["url"]; ok {
-		t.Fatalf("card retains duplicate URL: %#v", card)
-	}
-}
-
-func TestCompactListsKeepsOnlyIdentity(t *testing.T) {
-	lists := compactLists([]map[string]any{{"id": "list-1", "name": "Doing", "closed": false, "color": "blue"}})
-	if got := lists[0]; len(got) != 2 || got["id"] != "list-1" || got["name"] != "Doing" {
-		t.Fatalf("list = %#v", got)
-	}
-}
-
-func TestCompactBoardOmitsLabelNamesAndPreferences(t *testing.T) {
-	board := compactBoard(map[string]any{
-		"id": "board-1", "name": "Project", "desc": "Plan", "shortUrl": "https://trello.com/b/x",
-		"labelNames": map[string]any{"green": "review"},
-		"prefs":      map[string]any{"backgroundImageScaled": []any{}},
-		"url":        "https://trello.com/b/x",
-		"closed":     false,
-	})
-	if _, ok := board["labelNames"]; ok {
-		t.Fatalf("board retains redundant label names: %#v", board)
-	}
-	if _, ok := board["prefs"]; ok {
-		t.Fatalf("board retains preferences: %#v", board)
-	}
-	if _, ok := board["url"]; ok {
-		t.Fatalf("board retains duplicate URL: %#v", board)
-	}
-}
-
-func TestCompactChecklistsKeepsItemsAndStates(t *testing.T) {
-	checklists := compactChecklists([]map[string]any{{
-		"id": "checklist-1", "idCard": "card-1", "name": "Ship", "pos": 1,
-		"checkItems": []any{map[string]any{"id": "item-1", "name": "Test", "state": "complete", "pos": 2, "nameData": map[string]any{}}},
-	}})
-	items, ok := checklists[0]["items"].([]map[string]any)
-	if !ok || len(items) != 1 || items[0]["state"] != "complete" || items[0]["name"] != "Test" {
-		t.Fatalf("checklists = %#v", checklists)
-	}
-	if _, ok := items[0]["nameData"]; ok {
-		t.Fatalf("item retains provider noise: %#v", items[0])
-	}
-}
-
-func TestCompactCommentKeepsReactionIdentity(t *testing.T) {
-	comment := compactComment(map[string]any{
-		"id": "comment-1", "data": map[string]any{"text": "Ship it"},
-		"reactions": []any{map[string]any{"id": "reaction-1", "idMember": "member-1", "emoji": map[string]any{"native": "✅"}, "noise": true}},
-	})
-	reactions, ok := comment["reactions"].([]map[string]any)
-	if !ok || len(reactions) != 1 || reactions[0]["id"] != "reaction-1" || reactions[0]["idMember"] != "member-1" || reactions[0]["emoji"] == nil || len(reactions[0]) != 3 {
-		t.Fatalf("reactions = %#v", comment["reactions"])
-	}
-}
-
-func TestSearchCardsStopsAtLimitAndAnnotatesList(t *testing.T) {
-	requests := 0
-	c := NewClient(config.TrelloCredentials{})
-	c.baseURL = "https://example.test"
-	c.http = &http.Client{Transport: roundTripper(func(r *http.Request) (*http.Response, error) {
-		requests++
-		switch r.URL.Path {
-		case "/boards/board-1/lists":
-			return jsonResponse(r, `[{"id":"list-1","name":"Ideas"},{"id":"list-2","name":"Done"}]`), nil
-		case "/lists/list-1/cards":
-			return jsonResponse(r, `[{"id":"card-1","name":"Ship Omni","desc":"release"},{"id":"card-2","name":"Other","desc":""}]`), nil
-		case "/lists/list-2/cards":
-			return jsonResponse(r, `[{"id":"card-3","name":"Other","desc":""}]`), nil
-		default:
-			t.Fatalf("request = %s", r.URL.Path)
-			return nil, nil
+func TestArchiveScopeMapsOperatorVocabularyOntoTrelloFilters(t *testing.T) {
+	for in, want := range map[string]string{"": "open", "open": "open", "archived": "closed", "ALL": "all"} {
+		got, err := archiveScope(in)
+		if err != nil || got != want {
+			t.Fatalf("archiveScope(%q) = %q, %v; want %q", in, got, err, want)
 		}
-	})}
-	cards, searched, matched, err := c.searchCards("board-1", "omni", 1)
-	if err != nil {
-		t.Fatal(err)
 	}
-	if requests != 3 || searched != 3 || matched != 1 || len(cards) != 1 || cards[0]["id"] != "card-1" {
-		t.Fatalf("requests=%d searched=%d matched=%d cards=%#v", requests, searched, matched, cards)
+	if _, err := archiveScope("closed"); err == nil {
+		t.Fatal("cardScope accepted a provider spelling instead of the operator one")
 	}
-	list, ok := cards[0]["list"].(map[string]any)
-	if !ok || list["id"] != "list-1" || list["name"] != "Ideas" {
-		t.Fatalf("list annotation = %#v", cards[0]["list"])
+	if got := scopeName("closed"); got != "archived" {
+		t.Fatalf("scopeName(closed) = %q", got)
 	}
 }
 

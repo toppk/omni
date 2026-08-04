@@ -23,6 +23,7 @@ import (
 // A new closed vocabulary fails this test until it is classified here, so the
 // next one cannot arrive unexamined.
 var closedVocabularies = map[string]string{
+	"--scope open|archived|all":       "omni",
 	"--state complete|incomplete":     "omni",
 	"--state enabled|disabled":        "omni",
 	"--state authorized|unauthorized": "omni",
