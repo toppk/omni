@@ -1,0 +1,80 @@
+#!/bin/sh
+set -eu
+
+test_dir=$(mktemp -d)
+trap 'rm -rf "$test_dir"' EXIT HUP INT TERM
+
+mock_bin="$test_dir/mock-bin"
+install_dir="$test_dir/install"
+release_binary="$test_dir/release-omni"
+mkdir -p "$mock_bin" "$install_dir"
+
+printf '%s\n' '#!/bin/sh' 'echo "omni v9.8.7"' >"$release_binary"
+chmod 755 "$release_binary"
+
+printf '%s\n' \
+  '#!/bin/sh' \
+  'case "$1" in' \
+  '  -s) echo Linux ;;' \
+  '  -m) echo x86_64 ;;' \
+  '  *) exit 1 ;;' \
+  'esac' >"$mock_bin/uname"
+chmod 755 "$mock_bin/uname"
+
+printf '%s\n' \
+  '#!/bin/sh' \
+  'echo "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  $1"' >"$mock_bin/sha256sum"
+chmod 755 "$mock_bin/sha256sum"
+
+printf '%s\n' \
+  '#!/bin/sh' \
+  'output=' \
+  'url=' \
+  'while [ "$#" -gt 0 ]; do' \
+  '  case "$1" in' \
+  '    --output) output=$2; shift 2 ;;' \
+  '    http*) url=$1; shift ;;' \
+  '    *) shift ;;' \
+  '  esac' \
+  'done' \
+  'case "$url" in' \
+  '  *.sha256) sha256sum "$INSTALL_TEST_RELEASE" ;;' \
+  '  *) cp "$INSTALL_TEST_RELEASE" "$output" ;;' \
+  'esac' >"$mock_bin/curl"
+chmod 755 "$mock_bin/curl"
+
+printf '%s\n' '#!/bin/sh' 'echo "omni dev"' >"$install_dir/omni"
+chmod 755 "$install_dir/omni"
+
+output=$(HOME="$test_dir/home" \
+  OMNI_INSTALL_DIR="$install_dir" \
+  INSTALL_TEST_RELEASE="$release_binary" \
+  PATH="$mock_bin:$install_dir:/usr/bin:/bin" \
+  sh website/install.sh 2>&1)
+
+case "$output" in
+  *"Upgrading: omni dev"*"Installed omni v9.8.7"*) ;;
+  *) printf '%s\n' "development replacement output was unexpected:" "$output" >&2; exit 1 ;;
+esac
+
+if [ "$("$install_dir/omni" --version)" != "omni v9.8.7" ]; then
+  echo "development build was not replaced by the release" >&2
+  exit 1
+fi
+
+printf '%s\n' '#!/bin/sh' 'echo "not omni"' >"$install_dir/omni"
+chmod 755 "$install_dir/omni"
+
+if HOME="$test_dir/home" \
+  OMNI_INSTALL_DIR="$install_dir" \
+  INSTALL_TEST_RELEASE="$release_binary" \
+  PATH="$mock_bin:$install_dir:/usr/bin:/bin" \
+  sh website/install.sh >"$test_dir/foreign.out" 2>&1; then
+  echo "installer replaced a foreign executable" >&2
+  exit 1
+fi
+
+if ! grep -q 'does not identify as an Omni build' "$test_dir/foreign.out"; then
+  echo "installer did not explain the foreign executable refusal" >&2
+  exit 1
+fi

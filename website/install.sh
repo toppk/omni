@@ -54,8 +54,8 @@ if [ -e "$target" ]; then
   fi
   previous_version=$("$target" --version 2>/dev/null || true)
   case "$previous_version" in
-    "omni v"[0-9]*) ;;
-    *) echo "refusing to replace $target: it does not identify as an Omni release." >&2; exit 1 ;;
+    "omni v"[0-9]*|"omni dev") ;;
+    *) echo "refusing to replace $target: it does not identify as an Omni build." >&2; exit 1 ;;
   esac
 else
   existing_command=$(command -v omni 2>/dev/null || true)
