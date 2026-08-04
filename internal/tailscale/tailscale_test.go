@@ -95,6 +95,102 @@ func TestSetTagsIsAuthorizeCommandAndReplacesTagList(t *testing.T) {
 	}
 }
 
+func TestDeviceLifecycleMutationsUseFixedEndpoints(t *testing.T) {
+	tests := []struct {
+		name   string
+		tokens []string
+		args   []string
+		method string
+		path   string
+		body   string
+	}{
+		{"authorize", []string{"authorize", "tailscale", "device", "authorization", "set"}, []string{"dev1", "--state", "authorized"}, http.MethodPost, "/device/dev1/authorized", `{"authorized":true}`},
+		{"expiry policy", []string{"update", "tailscale", "device", "key", "expiry", "set"}, []string{"dev1", "--state", "disabled"}, http.MethodPost, "/device/dev1/key", `{"keyExpiryDisabled":true}`},
+		{"expire", []string{"administer", "tailscale", "device", "key", "expire"}, []string{"dev1"}, http.MethodPost, "/device/dev1/expire", ""},
+		{"delete", []string{"delete", "tailscale", "device", "delete"}, []string{"dev1"}, http.MethodDelete, "/device/dev1", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := testClient(t, func(r *http.Request) (*http.Response, error) {
+				var body []byte
+				if r.Body != nil {
+					body, _ = io.ReadAll(r.Body)
+				}
+				if r.Method != tt.method || r.URL.Path != tt.path || string(body) != tt.body {
+					t.Fatalf("request = %s %s %s", r.Method, r.URL.Path, body)
+				}
+				return response("", nil), nil
+			})
+			if err := c.execute(definition(t, tt.tokens...), tt.args, &bytes.Buffer{}); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestAuthKeyCreateWritesSecretOnlyToPrivateFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "enrollment.key")
+	c := testClient(t, func(r *http.Request) (*http.Response, error) {
+		body, _ := io.ReadAll(r.Body)
+		if r.Method != http.MethodPost || r.URL.Path != "/tailnet/-/keys" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		for _, want := range []string{`"keyType":"auth"`, `"expirySeconds":3600`, `"tags":["tag:server"]`, `"preauthorized":true`} {
+			if !strings.Contains(string(body), want) {
+				t.Fatalf("request body %s does not contain %s", body, want)
+			}
+		}
+		return response(`{"id":"k123CNTRL","key":"tskey-auth-super-secret","keyType":"auth","expires":"soon","capabilities":{"devices":{"create":{"tags":["tag:server"],"preauthorized":true}}}}`, nil), nil
+	})
+	var out bytes.Buffer
+	err := c.execute(definition(t, "create", "tailscale", "key", "auth", "create"), []string{"--output", path, "--expiry-seconds", "3600", "--tag", "tag:server", "--preauthorized"}, &out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(secret) != "tskey-auth-super-secret\n" || info.Mode().Perm() != 0600 {
+		t.Fatalf("secret file = %q mode %o", secret, info.Mode().Perm())
+	}
+	if strings.Contains(out.String(), "super-secret") || !strings.Contains(out.String(), `"key_file":"`+path+`"`) || !strings.Contains(out.String(), `"id":"k123CNTRL"`) {
+		t.Fatalf("unsafe or incomplete output: %s", out.String())
+	}
+}
+
+func TestAuthKeyCreateRefusesExistingOutputBeforeRemoteMutation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "existing.key")
+	if err := os.WriteFile(path, []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	c := testClient(t, func(*http.Request) (*http.Response, error) {
+		called = true
+		return response("", nil), nil
+	})
+	err := c.execute(definition(t, "create", "tailscale", "key", "auth", "create"), []string{"--output", path}, &bytes.Buffer{})
+	if err == nil || called {
+		t.Fatalf("err = %v, remote called = %v", err, called)
+	}
+}
+
+func TestKeyRevokeUsesDeleteEndpoint(t *testing.T) {
+	c := testClient(t, func(r *http.Request) (*http.Response, error) {
+		if r.Method != http.MethodDelete || r.URL.Path != "/tailnet/-/keys/k123CNTRL" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		return response("", nil), nil
+	})
+	if err := c.execute(definition(t, "delete", "tailscale", "key", "revoke"), []string{"k123CNTRL"}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestOAuthClientCredentialsMintAndUseAccessToken(t *testing.T) {
 	calls := 0
 	cachePath := filepath.Join(t.TempDir(), "ephemeral", "credentials.toml")

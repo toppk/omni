@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -238,6 +239,40 @@ func (c *Client) executeWithFormat(d command.Definition, args []string, format o
 			return err
 		}
 		result = map[string]any{"device_id": args[0], "tags": args[1:]}
+	case "authorize tailscale device authorization set":
+		deviceID, state, err := deviceStateOption(args, "--state", "authorized", "unauthorized", d.Name())
+		if err != nil {
+			return err
+		}
+		if _, _, err := c.json(http.MethodPost, "/device/"+url.PathEscape(deviceID)+"/authorized", map[string]bool{"authorized": state == "authorized"}); err != nil {
+			return err
+		}
+		result = map[string]any{"device_id": deviceID, "authorized": state == "authorized"}
+	case "update tailscale device key expiry set":
+		deviceID, state, err := deviceStateOption(args, "--state", "enabled", "disabled", d.Name())
+		if err != nil {
+			return err
+		}
+		if _, _, err := c.json(http.MethodPost, "/device/"+url.PathEscape(deviceID)+"/key", map[string]bool{"keyExpiryDisabled": state == "disabled"}); err != nil {
+			return err
+		}
+		result = map[string]any{"device_id": deviceID, "key_expiry": state}
+	case "administer tailscale device key expire":
+		if err := exact(args, 1, d.Name()); err != nil {
+			return err
+		}
+		if _, _, err := c.request(http.MethodPost, "/device/"+url.PathEscape(args[0])+"/expire", "", nil); err != nil {
+			return err
+		}
+		result = map[string]any{"device_id": args[0], "status": "expired"}
+	case "delete tailscale device delete":
+		if err := exact(args, 1, d.Name()); err != nil {
+			return err
+		}
+		if _, _, err := c.request(http.MethodDelete, "/device/"+url.PathEscape(args[0]), "", nil); err != nil {
+			return err
+		}
+		result = map[string]any{"device_id": args[0], "status": "deleted"}
 	case "observe tailscale acl get":
 		output, err := outputPath(args)
 		if err != nil {
@@ -379,6 +414,51 @@ func (c *Client) executeWithFormat(d command.Definition, args []string, format o
 			return decode(err)
 		}
 		result = map[string]any{"key": compactKey(key)}
+	case "create tailscale key auth create":
+		options, err := authKeyCreateOptions(args, d.Name())
+		if err != nil {
+			return err
+		}
+		secretFile, err := os.OpenFile(options.Output, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		if err != nil {
+			return fmt.Errorf("create auth-key output: %w", err)
+		}
+		keepFile := false
+		defer func() {
+			_ = secretFile.Close()
+			if !keepFile {
+				_ = os.Remove(options.Output)
+			}
+		}()
+		data, _, err := c.json(http.MethodPost, c.tailnetPath("/keys"), options.Request())
+		if err != nil {
+			return err
+		}
+		var key map[string]any
+		if err := json.Unmarshal(data, &key); err != nil {
+			return decode(err)
+		}
+		secret, ok := key["key"].(string)
+		if !ok || secret == "" {
+			return fmt.Errorf("Tailscale auth-key response did not include one-time key material")
+		}
+		if _, err := io.WriteString(secretFile, secret+"\n"); err != nil {
+			return fmt.Errorf("write auth-key output: %w", err)
+		}
+		if err := secretFile.Close(); err != nil {
+			return fmt.Errorf("close auth-key output: %w", err)
+		}
+		keepFile = true
+		delete(key, "key")
+		result = map[string]any{"key": compactKey(key), "key_file": options.Output}
+	case "delete tailscale key revoke":
+		if err := exact(args, 1, d.Name()); err != nil {
+			return err
+		}
+		if _, _, err := c.request(http.MethodDelete, c.tailnetPath("/keys/")+url.PathEscape(args[0]), "", nil); err != nil {
+			return err
+		}
+		result = map[string]any{"key_id": args[0], "status": "revoked"}
 	case "observe tailscale dns get":
 		dns := make(map[string]any)
 		for name, endpoint := range map[string]string{"nameservers": "/dns/nameservers", "preferences": "/dns/preferences", "searchPaths": "/dns/searchpaths", "splitDNS": "/dns/split-dns"} {
@@ -442,14 +522,14 @@ func (c *Client) json(method, endpoint string, value any) ([]byte, http.Header, 
 func compactDeviceList(value map[string]any, details bool) map[string]any {
 	keys := []string{"id", "hostname", "os", "lastSeen"}
 	if details {
-		keys = append(keys, "name", "user", "addresses", "tags", "authorized", "clientVersion", "expires")
+		keys = append(keys, "name", "user", "addresses", "tags", "authorized", "clientVersion", "expires", "keyExpiryDisabled")
 	}
 	return pick(value, keys...)
 }
 func compactDeviceGet(value map[string]any, details bool) map[string]any {
 	keys := []string{"id", "hostname", "name", "user", "os", "lastSeen", "authorized", "tags"}
 	if details {
-		keys = append(keys, "addresses", "clientVersion", "expires", "nodeId")
+		keys = append(keys, "addresses", "clientVersion", "expires", "keyExpiryDisabled", "nodeId")
 	}
 	return pick(value, keys...)
 }
@@ -550,6 +630,92 @@ func keyListOptions(args []string) (bool, error) {
 	}
 	return false, fmt.Errorf("observe tailscale key list accepts only --all")
 }
+func deviceStateOption(args []string, option, first, second, name string) (deviceID, state string, err error) {
+	if len(args) != 3 || args[1] != option {
+		return "", "", fmt.Errorf("%s requires DEVICE_ID %s %s|%s", name, option, first, second)
+	}
+	if args[2] != first && args[2] != second {
+		return "", "", fmt.Errorf("%s expects %s %s or %s", name, option, first, second)
+	}
+	return args[0], args[2], nil
+}
+
+type authKeyOptions struct {
+	Output        string
+	Description   string
+	ExpirySeconds int64
+	Tags          []string
+	Reusable      bool
+	Ephemeral     bool
+	Preauthorized bool
+}
+
+func authKeyCreateOptions(args []string, name string) (authKeyOptions, error) {
+	var options authKeyOptions
+	for len(args) > 0 {
+		switch args[0] {
+		case "--output", "--description", "--expiry-seconds", "--tag":
+			if len(args) < 2 || args[1] == "" {
+				return options, fmt.Errorf("%s requires a value for %s", name, args[0])
+			}
+			option, value := args[0], args[1]
+			switch option {
+			case "--output":
+				if options.Output != "" {
+					return options, fmt.Errorf("%s accepts --output only once", name)
+				}
+				options.Output = value
+			case "--description":
+				if options.Description != "" {
+					return options, fmt.Errorf("%s accepts --description only once", name)
+				}
+				options.Description = value
+			case "--expiry-seconds":
+				expiry, parseErr := strconv.ParseInt(value, 10, 64)
+				if parseErr != nil || expiry <= 0 {
+					return options, fmt.Errorf("%s expects --expiry-seconds to be a positive integer", name)
+				}
+				options.ExpirySeconds = expiry
+			case "--tag":
+				if !strings.HasPrefix(value, "tag:") || len(value) == len("tag:") {
+					return options, fmt.Errorf("%s expects --tag values in tag:NAME form", name)
+				}
+				options.Tags = append(options.Tags, value)
+			}
+			args = args[2:]
+		case "--reusable":
+			options.Reusable = true
+			args = args[1:]
+		case "--ephemeral":
+			options.Ephemeral = true
+			args = args[1:]
+		case "--preauthorized":
+			options.Preauthorized = true
+			args = args[1:]
+		default:
+			return options, fmt.Errorf("unknown option %s for %s", args[0], name)
+		}
+	}
+	if options.Output == "" {
+		return options, fmt.Errorf("%s requires --output FILE", name)
+	}
+	return options, nil
+}
+
+func (o authKeyOptions) Request() map[string]any {
+	create := map[string]any{"reusable": o.Reusable, "ephemeral": o.Ephemeral, "preauthorized": o.Preauthorized}
+	if len(o.Tags) > 0 {
+		create["tags"] = o.Tags
+	}
+	request := map[string]any{"keyType": "auth", "capabilities": map[string]any{"devices": map[string]any{"create": create}}}
+	if o.Description != "" {
+		request["description"] = o.Description
+	}
+	if o.ExpirySeconds != 0 {
+		request["expirySeconds"] = o.ExpirySeconds
+	}
+	return request
+}
 func setACLOptions(args []string) (aclFile, backupFile string, err error) {
 	if len(args) != 3 {
 		return "", "", fmt.Errorf("administer tailscale acl set requires exactly one ACL_FILE and --backup BACKUP_FILE; the backup path must be new")
@@ -606,13 +772,17 @@ func requiredScope(method, endpoint string) string {
 	case strings.HasSuffix(path, "/routes"):
 		return "devices:routes:read"
 	case strings.Contains(path, "/keys"):
-		return "oauth_keys:read (OAuth clients), auth_keys:read (auth keys), and/or api_access_tokens:read (API access tokens)"
+		if method == http.MethodGet {
+			return "oauth_keys:read (OAuth clients), auth_keys:read (auth keys), and/or api_access_tokens:read (API access tokens)"
+		}
+		return "auth_keys (auth keys), oauth_keys (OAuth clients), and/or api_access_tokens (API access tokens)"
 	case strings.Contains(path, "/users") || strings.HasPrefix(path, "/user/"):
 		return "users:read"
 	case strings.Contains(path, "/devices") || strings.HasPrefix(path, "/device/"):
 		if method == http.MethodGet {
 			return "devices:core:read"
 		}
+		return "devices:core"
 	}
 	return ""
 }
