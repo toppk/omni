@@ -81,6 +81,15 @@ options. Omni verifies every requested ID against the destination board before
 creating the card, then sends the relationships in Trello's initial card-create
 request so they cannot be silently dropped.
 
+Label operations distinguish board scope from card scope. `update trello card
+label add` and `update trello card label remove` change one card's labels and
+reverse each other. `delete trello label delete LABEL_ID` deletes the label
+from the board itself, which removes it from every card that carried it. That
+deletion is irreversible, so Omni reads the label first and reports its board,
+name, and color in the response; recreating an equivalent label with `create
+trello label create` yields a new ID and reattaches it to nothing. Labels are
+board state rather than card state, so no archive guard applies.
+
 `move trello card move` and other card mutations refuse archived cards. Restore
 a card deliberately with `update trello card unarchive CARD_ID`; archive and
 unarchive are each other's explicit reversal paths.
@@ -94,7 +103,8 @@ adding cards or changing its metadata.
 The Trello MVP supports compact card enumeration and search; attachment list,
 download, upload, and deletion; checklist item inspection, completion, and rename; card updates,
 due-date completion, and explicit unarchive; board-description updates; list
-creation, rename, archive, and unarchive; comments; board labels; board
+creation, rename, archive, and unarchive; comments; board label listing,
+creation, and deletion; board
 members; card member and label assignment; and compact card activity. Use
 `omni describe trello` for the exact action-first command forms and their
 safety constraints.

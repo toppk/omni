@@ -960,6 +960,20 @@ func ExecuteWithFormat(d command.Definition, args []string, creds config.TrelloC
 			return err
 		}
 		result = map[string]string{"deleted_card_id": args[0]}
+	case "delete trello label delete":
+		if err := exact(args, 1, d.Name()); err != nil {
+			return err
+		}
+		// Read the label first: deletion is irreversible and Trello returns no
+		// record, so its board, name, and color would otherwise be lost.
+		var label map[string]any
+		if err := c.request(http.MethodGet, "/labels/"+url.PathEscape(args[0]), nil, &label); err != nil {
+			return err
+		}
+		if err := c.request(http.MethodDelete, "/labels/"+url.PathEscape(args[0]), nil, nil); err != nil {
+			return err
+		}
+		result = map[string]any{"deleted_label": compactLabel(label)}
 	default:
 		return fmt.Errorf("%s is registered but not implemented yet", d.Name())
 	}

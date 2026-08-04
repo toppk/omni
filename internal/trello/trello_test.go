@@ -350,6 +350,62 @@ func TestChecklistItemRenameUsesChecklistIdentityAndOpenCardGuard(t *testing.T) 
 	}
 }
 
+func TestLabelDeleteRecordsLabelIdentityBeforeDeleting(t *testing.T) {
+	requests := 0
+	stubExecuteClient(t, func(r *http.Request) (*http.Response, error) {
+		requests++
+		switch requests {
+		case 1:
+			if r.Method != http.MethodGet || r.URL.Path != "/labels/label-1" {
+				t.Fatalf("label read = %s %s", r.Method, r.URL.Path)
+			}
+			return jsonResponse(r, `{"id":"label-1","idBoard":"board-1","name":"Blocked","color":"red","uses":4}`), nil
+		case 2:
+			if r.Method != http.MethodDelete || r.URL.Path != "/labels/label-1" {
+				t.Fatalf("label delete = %s %s", r.Method, r.URL.Path)
+			}
+			return jsonResponse(r, `{}`), nil
+		default:
+			t.Fatalf("unexpected request %d", requests)
+			return nil, nil
+		}
+	})
+	d, _ := command.Find([]string{"delete", "trello", "label", "delete"})
+	out := &bytes.Buffer{}
+	if err := ExecuteWithFormat(d, []string{"label-1"}, config.TrelloCredentials{}, config.TrelloSettings{APIURL: "https://example.test"}, output.JSON, out); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d, want 2", requests)
+	}
+	var payload struct {
+		DeletedLabel map[string]any `json:"deleted_label"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.DeletedLabel["id"] != "label-1" || payload.DeletedLabel["idBoard"] != "board-1" {
+		t.Fatalf("deleted label identity = %#v", payload.DeletedLabel)
+	}
+	if payload.DeletedLabel["name"] != "Blocked" || payload.DeletedLabel["color"] != "red" {
+		t.Fatalf("deleted label recreation fields = %#v", payload.DeletedLabel)
+	}
+	if _, ok := payload.DeletedLabel["uses"]; ok {
+		t.Fatalf("deleted label kept uncompacted fields = %#v", payload.DeletedLabel)
+	}
+}
+
+func TestLabelDeleteRejectsMissingLabelIDWithoutRequests(t *testing.T) {
+	stubExecuteClient(t, func(r *http.Request) (*http.Response, error) {
+		t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		return nil, nil
+	})
+	d, _ := command.Find([]string{"delete", "trello", "label", "delete"})
+	if err := Execute(d, nil, config.TrelloCredentials{}, config.TrelloSettings{APIURL: "https://example.test"}, &bytes.Buffer{}); err == nil {
+		t.Fatal("expected an error when LABEL_ID is missing")
+	}
+}
+
 func stubExecuteClient(t *testing.T, handler roundTripper) {
 	t.Helper()
 	previous := makeClient
