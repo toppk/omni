@@ -406,6 +406,200 @@ func TestLabelDeleteRejectsMissingLabelIDWithoutRequests(t *testing.T) {
 	}
 }
 
+func TestLabelDeleteReportsColorlessLabelVisiblyAndRecreatably(t *testing.T) {
+	stubExecuteClient(t, func(r *http.Request) (*http.Response, error) {
+		if r.Method == http.MethodGet {
+			return jsonResponse(r, `{"id":"label-1","idBoard":"board-1","name":"sylvanus","color":null}`), nil
+		}
+		return jsonResponse(r, `{}`), nil
+	})
+	d, _ := command.Find([]string{"delete", "trello", "label", "delete"})
+	text := &bytes.Buffer{}
+	if err := ExecuteWithFormat(d, []string{"label-1"}, config.TrelloCredentials{}, config.TrelloSettings{APIURL: "https://example.test"}, output.Text, text); err != nil {
+		t.Fatal(err)
+	}
+	// A null color must render as a value, not as a bare heading that reads like
+	// a rendering failure.
+	if !strings.Contains(text.String(), "COLOR: -") {
+		t.Fatalf("colorless label rendered without a placeholder:\n%s", text.String())
+	}
+	// The color the pre-read reports has to be a value label create accepts,
+	// otherwise the deleted label cannot be recreated through Omni at all.
+	jsonOut := &bytes.Buffer{}
+	if err := ExecuteWithFormat(d, []string{"label-1"}, config.TrelloCredentials{}, config.TrelloSettings{APIURL: "https://example.test"}, output.JSON, jsonOut); err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		DeletedLabel map[string]any `json:"deleted_label"`
+	}
+	if err := json.Unmarshal(jsonOut.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if color, ok := payload.DeletedLabel["color"]; !ok || color != nil {
+		t.Fatalf("JSON dropped or altered the null color: %#v", payload.DeletedLabel)
+	}
+	if _, err := labelColor(colorlessLabel); err != nil {
+		t.Fatalf("label create cannot accept the reported colorless value: %v", err)
+	}
+}
+
+func TestLabelCreateSendsExplicitNullForColorlessLabel(t *testing.T) {
+	var payload map[string]any
+	stubExecuteClient(t, func(r *http.Request) (*http.Response, error) {
+		if r.Method != http.MethodPost || r.URL.Path != "/labels" {
+			t.Fatalf("label create = %s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		return jsonResponse(r, `{"id":"label-2","idBoard":"board-1","name":"sylvanus","color":null}`), nil
+	})
+	d, _ := command.Find([]string{"create", "trello", "label", "create"})
+	if err := Execute(d, []string{"board-1", "--name", "sylvanus", "--color", "none"}, config.TrelloCredentials{}, config.TrelloSettings{APIURL: "https://example.test"}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	// Trello requires the color parameter to be present but allows it to be
+	// null, so the key must survive with a null value rather than be omitted.
+	color, present := payload["color"]
+	if !present || color != nil {
+		t.Fatalf("create payload = %#v, want color present and null", payload)
+	}
+}
+
+func TestLabelCreateRejectsUnknownColorBeforeCallingTrello(t *testing.T) {
+	stubExecuteClient(t, func(r *http.Request) (*http.Response, error) {
+		t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		return nil, nil
+	})
+	d, _ := command.Find([]string{"create", "trello", "label", "create"})
+	err := Execute(d, []string{"board-1", "--name", "Blocked", "--color", "chartreuse"}, config.TrelloCredentials{}, config.TrelloSettings{APIURL: "https://example.test"}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected an unsupported color to be rejected")
+	}
+	if !strings.Contains(err.Error(), "chartreuse") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestLabelSetChangesOnlySuppliedFields(t *testing.T) {
+	var payload map[string]any
+	stubExecuteClient(t, func(r *http.Request) (*http.Response, error) {
+		if r.Method != http.MethodPut || r.URL.Path != "/labels/label-1" {
+			t.Fatalf("label set = %s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		return jsonResponse(r, `{"id":"label-1","idBoard":"board-1","name":"current","color":"sky"}`), nil
+	})
+	d, _ := command.Find([]string{"update", "trello", "label", "set"})
+	if err := Execute(d, []string{"label-1", "--name", "current"}, config.TrelloCredentials{}, config.TrelloSettings{APIURL: "https://example.test"}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	// A rename must not carry a color, or it would reset the label's color.
+	if payload["name"] != "current" || len(payload) != 1 {
+		t.Fatalf("rename payload = %#v", payload)
+	}
+}
+
+func TestLabelSetNormalizesShadeAndRequiresOneField(t *testing.T) {
+	var payload map[string]any
+	stubExecuteClient(t, func(r *http.Request) (*http.Response, error) {
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		return jsonResponse(r, `{"id":"label-1","idBoard":"board-1","name":"current","color":"sky_dark"}`), nil
+	})
+	d, _ := command.Find([]string{"update", "trello", "label", "set"})
+	if err := Execute(d, []string{"label-1", "--color", "sky_bold"}, config.TrelloCredentials{}, config.TrelloSettings{APIURL: "https://example.test"}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if payload["color"] != "sky_dark" || len(payload) != 1 {
+		t.Fatalf("recolor payload = %#v", payload)
+	}
+	if err := Execute(d, []string{"label-1"}, config.TrelloCredentials{}, config.TrelloSettings{APIURL: "https://example.test"}, &bytes.Buffer{}); err == nil {
+		t.Fatal("expected label set with no fields to be rejected")
+	}
+}
+
+func TestLabelColorAcceptsShadesAndColorlessAndRejectsOthers(t *testing.T) {
+	for _, valid := range []struct{ in, want string }{
+		{"green", "green"}, {"GREEN", "green"}, {"sky_subtle", "sky_light"}, {"sky_light", "sky_light"},
+		{"black_bold", "black_dark"}, {"black_dark", "black_dark"}, {"lime_normal", "lime"},
+	} {
+		got, err := labelColor(valid.in)
+		if err != nil || got != valid.want {
+			t.Fatalf("labelColor(%q) = %#v, %v; want %q", valid.in, got, err, valid.want)
+		}
+	}
+	got, err := labelColor("none")
+	if err != nil || got != nil {
+		t.Fatalf("colorless label = %#v, %v; want nil", got, err)
+	}
+	for _, invalid := range []string{"", "chartreuse", "green_vivid", "_green"} {
+		if _, err := labelColor(invalid); err == nil {
+			t.Fatalf("labelColor(%q) was accepted", invalid)
+		}
+	}
+	err = func() error { _, err := labelColor("chartreuse"); return err }()
+	if !strings.Contains(err.Error(), "green") || !strings.Contains(err.Error(), "none") {
+		t.Fatalf("color error does not disclose the palette: %v", err)
+	}
+}
+
+func TestLabelPaletteEnumeratesExactlyWhatLabelColorAccepts(t *testing.T) {
+	palette := labelPalette()
+	if len(palette) != 31 {
+		t.Fatalf("palette has %d colors, want 31 (ten hues, three shades, plus colorless)", len(palette))
+	}
+	for _, entry := range palette {
+		color, _ := entry["color"].(string)
+		normalized, err := labelColor(color)
+		if err != nil {
+			t.Fatalf("palette lists %q but label create rejects it: %v", color, err)
+		}
+		// An enumerated color must already be in the spelling Trello stores, so
+		// what the palette shows is what a label record reports back.
+		if color == colorlessLabel {
+			if normalized != nil {
+				t.Fatalf("colorless entry normalized to %#v", normalized)
+			}
+			continue
+		}
+		if normalized != color {
+			t.Fatalf("palette lists %q but it normalizes to %#v", color, normalized)
+		}
+		if alias, ok := entry["also_accepted"].(string); ok {
+			aliased, err := labelColor(alias)
+			if err != nil || aliased != color {
+				t.Fatalf("alias %q = %#v, %v; want %q", alias, aliased, err, color)
+			}
+		}
+	}
+}
+
+func TestLabelColorListAnswersWithoutCallingTrello(t *testing.T) {
+	stubExecuteClient(t, func(r *http.Request) (*http.Response, error) {
+		t.Fatalf("unexpected request %s %s for a fixed palette", r.Method, r.URL.Path)
+		return nil, nil
+	})
+	d, _ := command.Find([]string{"observe", "trello", "label", "color", "list"})
+	out := &bytes.Buffer{}
+	if err := ExecuteWithFormat(d, nil, config.TrelloCredentials{}, config.TrelloSettings{APIURL: "https://example.test"}, output.JSON, out); err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		Colors []map[string]any `json:"colors"`
+		Count  int              `json:"count"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Count != 31 || len(payload.Colors) != 31 {
+		t.Fatalf("count = %d, colors = %d", payload.Count, len(payload.Colors))
+	}
+}
+
 func stubExecuteClient(t *testing.T, handler roundTripper) {
 	t.Helper()
 	previous := makeClient

@@ -54,7 +54,9 @@ omni configure set trello.default-board-id BOARD_ID
 
 Board overview returns board identity, description, short URL, and each list's
 ID and name. To resolve or manage labels, use `observe trello label list
-BOARD_ID`: its records include the usable label ID, color, and name. Card
+BOARD_ID`: its records include the usable label ID, color, and name, and
+`observe trello label color list` enumerates every color a label operation
+accepts without calling Trello. Card
 observation returns the fields used for ordinary workflow work: identity, list
 and position,
 description, due and activity dates, members, labels, archive state, short
@@ -81,14 +83,37 @@ options. Omni verifies every requested ID against the destination board before
 creating the card, then sends the relationships in Trello's initial card-create
 request so they cannot be silently dropped.
 
+## Labels
+
 Label operations distinguish board scope from card scope. `update trello card
 label add` and `update trello card label remove` change one card's labels and
-reverse each other. `delete trello label delete LABEL_ID` deletes the label
-from the board itself, which removes it from every card that carried it. That
+reverse each other.
+
+`update trello label set LABEL_ID [--name NAME] [--color COLOR]` renames or
+recolors a label in place. Prefer it over delete-and-recreate whenever the
+label's meaning survives the change: the label keeps its ID, so every card
+carrying it keeps carrying it, and no card has to be re-tagged. Only the options
+supplied change; an omitted `--name` or `--color` is left alone.
+
+`delete trello label delete LABEL_ID` deletes the label from the board itself,
+which removes it from every card that carried it, archived cards included. That
 deletion is irreversible, so Omni reads the label first and reports its board,
 name, and color in the response; recreating an equivalent label with `create
 trello label create` yields a new ID and reattaches it to nothing. Labels are
 board state rather than card state, so no archive guard applies.
+
+Label colors are a fixed palette: the hues `green`, `yellow`, `orange`, `red`,
+`purple`, `blue`, `sky`, `lime`, `pink`, and `black`, each available unshaded or
+as `HUE_subtle` or `HUE_bold`, plus `none` for a colorless label — 31 values.
+Trello's API spells the shades `HUE_light` and `HUE_dark` and Omni accepts those
+spellings too, reporting whatever Trello stores. An unsupported color is
+rejected locally with the full palette in the error, before any request is sent.
+
+Colorless labels are legitimate and Omni round-trips them: `--color none` sends
+the explicit null Trello requires, and `delete` reports a colorless label as a
+null color in JSON and as `-` in text. `--color` stays required on `label
+create` rather than defaulting to colorless, because a colorless label is nearly
+invisible on a board and should be a deliberate choice.
 
 `move trello card move` and other card mutations refuse archived cards. Restore
 a card deliberately with `update trello card unarchive CARD_ID`; archive and
@@ -104,7 +129,7 @@ The Trello MVP supports compact card enumeration and search; attachment list,
 download, upload, and deletion; checklist item inspection, completion, and rename; card updates,
 due-date completion, and explicit unarchive; board-description updates; list
 creation, rename, archive, and unarchive; comments; board label listing,
-creation, and deletion; board
+creation, rename, recolor, and deletion; board
 members; card member and label assignment; and compact card activity. Use
 `omni describe trello` for the exact action-first command forms and their
 safety constraints.

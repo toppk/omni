@@ -84,7 +84,7 @@ func (r textRenderer) section(name string, value any, indent string) error {
 		}
 		return r.object(typed, indent+"  ")
 	default:
-		_, err := fmt.Fprintf(r.w, "%s%s: %s\n", indent, heading(name), scalar(value))
+		_, err := fmt.Fprintf(r.w, "%s%s: %s\n", indent, heading(name), field(value))
 		return err
 	}
 }
@@ -127,7 +127,7 @@ func (r textRenderer) list(values []any, indent string) error {
 	for _, object := range objects {
 		row := make([]string, len(columns))
 		for i, column := range columns {
-			row[i] = scalar(object[column])
+			row[i] = field(object[column])
 		}
 		if _, err := fmt.Fprintln(writer, strings.Join(row, "\t")); err != nil {
 			return err
@@ -287,6 +287,17 @@ func upper(values []string) []string {
 		result[i] = heading(value)
 	}
 	return result
+}
+
+// field renders one value for a person. A null or empty value becomes a visible
+// placeholder: a colorless Trello label, an unset due date, or an empty
+// description would otherwise print as a bare heading and read as a rendering
+// failure rather than as a value. JSON keeps the original null.
+func field(value any) string {
+	if rendered := scalar(value); rendered != "" {
+		return rendered
+	}
+	return "-"
 }
 
 func scalar(value any) string {

@@ -389,6 +389,12 @@ func ExecuteWithFormat(d command.Definition, args []string, creds config.TrelloC
 			return err
 		}
 		result = map[string]any{"labels": compactLabels(labels)}
+	case "observe trello label color list":
+		if err := exact(args, 0, d.Name()); err != nil {
+			return err
+		}
+		palette := labelPalette()
+		result = map[string]any{"colors": palette, "count": len(palette)}
 	case "observe trello member list":
 		boardID, err := boardID(args, settings.DefaultBoardID, d.Name())
 		if err != nil {
@@ -566,8 +572,12 @@ func ExecuteWithFormat(d command.Definition, args []string, creds config.TrelloC
 		if fields["name"] == "" || fields["color"] == "" {
 			return fmt.Errorf("%s requires --name NAME and --color COLOR", d.Name())
 		}
+		color, err := labelColor(fields["color"])
+		if err != nil {
+			return err
+		}
 		var label map[string]any
-		if err := c.request(http.MethodPost, "/labels", map[string]string{"idBoard": args[0], "name": fields["name"], "color": fields["color"]}, &label); err != nil {
+		if err := c.request(http.MethodPost, "/labels", map[string]any{"idBoard": args[0], "name": fields["name"], "color": color}, &label); err != nil {
 			return err
 		}
 		result = map[string]any{"label": compactLabel(label)}
@@ -806,6 +816,35 @@ func ExecuteWithFormat(d command.Definition, args []string, creds config.TrelloC
 			return err
 		}
 		result = map[string]any{"item": compactChecklistItem(item)}
+	case "update trello label set":
+		if len(args) < 2 {
+			return fmt.Errorf("%s requires LABEL_ID and --name NAME or --color COLOR", d.Name())
+		}
+		fields, err := named(args[1:], "name", "color")
+		if err != nil {
+			return err
+		}
+		if fields["name"] == "" && fields["color"] == "" {
+			return fmt.Errorf("%s requires --name NAME or --color COLOR", d.Name())
+		}
+		// Send only what was asked for: Trello leaves an omitted label field
+		// alone, so a rename cannot silently reset the color, or the reverse.
+		payload := map[string]any{}
+		if fields["name"] != "" {
+			payload["name"] = fields["name"]
+		}
+		if fields["color"] != "" {
+			color, err := labelColor(fields["color"])
+			if err != nil {
+				return err
+			}
+			payload["color"] = color
+		}
+		var label map[string]any
+		if err := c.request(http.MethodPut, "/labels/"+url.PathEscape(args[0]), payload, &label); err != nil {
+			return err
+		}
+		result = map[string]any{"label": compactLabel(label)}
 	case "update trello card label add", "update trello card label remove", "update trello card member add", "update trello card member remove":
 		if err := exact(args, 2, d.Name()); err != nil {
 			return err
@@ -1299,6 +1338,71 @@ func hasLabel(card map[string]any, labelID string) bool {
 			if id, _ := label["id"].(string); id == labelID {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// labelHues is Trello's label palette. Each hue also exists in a subtle and a
+// bold shade, which the API spells HUE_light and HUE_dark, so with the colorless
+// label there are 31 valid values.
+var labelHues = []string{"green", "yellow", "orange", "red", "purple", "blue", "sky", "lime", "pink", "black"}
+
+// labelShades maps the shade vocabulary Trello's interface shows an operator
+// onto the suffixes its API accepts. The committed OpenAPI snapshot predates the
+// shades and documents only the ten unshaded hues, so this deliberately accepts
+// more than the snapshot: refusing a shade would make a shaded label
+// unrecreatable after label delete reported its color.
+var labelShades = map[string]string{"": "", "normal": "", "subtle": "_light", "light": "_light", "bold": "_dark", "dark": "_dark"}
+
+const colorlessLabel = "none"
+
+// labelPalette enumerates every color a label operation accepts. It is derived
+// from the same hues and shades labelColor validates against, so the enumeration
+// cannot drift from what is actually accepted.
+func labelPalette() []map[string]any {
+	shades := []struct{ name, suffix, alias string }{
+		{"normal", "", ""},
+		{"subtle", "_light", "_subtle"},
+		{"bold", "_dark", "_bold"},
+	}
+	palette := make([]map[string]any, 0, len(labelHues)*len(shades)+1)
+	for _, hue := range labelHues {
+		for _, shade := range shades {
+			entry := map[string]any{"color": hue + shade.suffix, "hue": hue, "shade": shade.name}
+			if shade.alias != "" {
+				entry["also_accepted"] = hue + shade.alias
+			}
+			palette = append(palette, entry)
+		}
+	}
+	return append(palette, map[string]any{"color": colorlessLabel, "shade": "colorless"})
+}
+
+// labelColor converts an operator-supplied color into the value Trello expects.
+// A colorless label is an explicit null: Trello requires the color parameter to
+// be present but permits a null value. Validating here keeps the palette
+// discoverable in the error instead of returning a provider validation failure.
+func labelColor(value string) (any, error) {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if normalized == colorlessLabel {
+		return nil, nil
+	}
+	hue, shade := normalized, ""
+	if split := strings.LastIndex(normalized, "_"); split > 0 {
+		hue, shade = normalized[:split], normalized[split+1:]
+	}
+	suffix, known := labelShades[shade]
+	if !known || !contains(labelHues, hue) {
+		return nil, fmt.Errorf("unsupported Trello label color %q; use one of %s, each optionally as HUE_subtle or HUE_bold, or %s for a colorless label", value, strings.Join(labelHues, ", "), colorlessLabel)
+	}
+	return hue + suffix, nil
+}
+
+func contains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
 		}
 	}
 	return false
