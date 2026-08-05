@@ -15,7 +15,11 @@ This document is the operating guide for contributors and release maintainers. T
 
 All contributions are welcome. Contributions are evaluated on their own technical and product merits, regardless of the contributor's identity, affiliation, background, or prior relationship with the project.
 
-Before opening a change, run the daily quality gate and include tests and documentation appropriate to its scope. For a larger command-surface or provider design, open an issue or start a discussion first so the command grammar and safety metadata can be reviewed early.
+External contributions are welcome as pull requests. Open an issue or start a discussion first for a larger command-surface or provider design, so the command grammar and safety metadata can be reviewed before the implementation work.
+
+Maintainers commit to `master` directly; there is no internal pull-request cycle. That makes the quality gate the only gate: run `scripts/check` and include tests and documentation appropriate to the change's scope before committing, because nothing downstream will catch what it misses. Keep commits scoped so a single change can be reverted on its own, and never commit a state that does not build and pass tests — `master` is the branch releases are cut from, and a release can be prepared from any commit on it.
+
+Whichever route a change takes, run the daily quality gate and include tests and documentation appropriate to its scope.
 
 ## Local requirements
 
