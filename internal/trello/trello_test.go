@@ -149,6 +149,73 @@ func TestMoveCardReadsOpenStateThenUpdates(t *testing.T) {
 	}
 }
 
+func TestListRenameRequiresDeclaredArchiveState(t *testing.T) {
+	// Trello permits renaming a closed list, so all four combinations of actual
+	// state and declared intent are meaningful: two proceed, two are refused.
+	for _, tc := range []struct {
+		name     string
+		closed   bool
+		flag     []string
+		wantPut  bool
+		wantHint string
+	}{
+		{name: "open list, no flag", closed: false, wantPut: true},
+		{name: "archived list with flag", closed: true, flag: []string{"--archived-list"}, wantPut: true},
+		{name: "archived list without flag", closed: true, wantHint: "pass --archived-list"},
+		{name: "open list with flag", closed: false, flag: []string{"--archived-list"}, wantHint: "omit --archived-list"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			put := false
+			stubExecuteClient(t, func(r *http.Request) (*http.Response, error) {
+				if r.Method == http.MethodGet && r.URL.Path == "/lists/list-1" {
+					return jsonResponse(r, `{"id":"list-1","name":"Retired 2024","closed":`+map[bool]string{true: "true", false: "false"}[tc.closed]+`}`), nil
+				}
+				if r.Method == http.MethodPut && r.URL.Path == "/lists/list-1" {
+					put = true
+					return jsonResponse(r, `{"id":"list-1","name":"RETIRED-2024","closed":true}`), nil
+				}
+				t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+				return nil, nil
+			})
+			d, _ := command.Find([]string{"update", "trello", "list", "name", "set"})
+			args := append([]string{"list-1", "--name", "RETIRED-2024"}, tc.flag...)
+			err := Execute(d, args, config.TrelloCredentials{}, config.TrelloSettings{APIURL: "https://example.test"}, &bytes.Buffer{})
+			if tc.wantPut {
+				if err != nil {
+					t.Fatalf("rename failed: %v", err)
+				}
+				if !put {
+					t.Fatal("no rename was sent")
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("expected the declared state to be enforced")
+			}
+			// The error has to name the flag that resolves it.
+			if !strings.Contains(err.Error(), tc.wantHint) {
+				t.Fatalf("error = %v, want it to mention %q", err, tc.wantHint)
+			}
+			if put {
+				t.Fatal("rename was sent despite the state mismatch")
+			}
+		})
+	}
+}
+
+func TestTakeFlagSeparatesValuelessFlagFromNamedOptions(t *testing.T) {
+	rest, present, err := takeFlag([]string{"--name", "X", "--archived-list"}, "--archived-list")
+	if err != nil || !present || strings.Join(rest, " ") != "--name X" {
+		t.Fatalf("rest=%v present=%v err=%v", rest, present, err)
+	}
+	if _, present, _ := takeFlag([]string{"--name", "X"}, "--archived-list"); present {
+		t.Fatal("absent flag reported as present")
+	}
+	if _, _, err := takeFlag([]string{"--archived-list", "--archived-list"}, "--archived-list"); err == nil {
+		t.Fatal("expected a repeated flag to be rejected")
+	}
+}
+
 func TestRequireOpenListRefusesArchivedList(t *testing.T) {
 	c := NewClient(config.TrelloCredentials{})
 	c.baseURL = "https://example.test"

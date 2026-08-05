@@ -180,12 +180,17 @@ Card creation and list name/position changes likewise refuse archived lists.
 Restore the list explicitly with `update trello list unarchive LIST_ID` before
 adding cards or changing its metadata.
 
-This refusal is Omni policy, not a Trello constraint: Trello itself accepts a
-rename on a closed list, and board activity from before the guard existed shows
-it succeeding. Omni requires the unarchive to be deliberate so that changing a
-retired list cannot be mistaken for changing a live one. The cost is that
-renaming an archived list takes three mutations through Omni — unarchive,
-rename, archive — with the list briefly live on the board in between.
+Renaming is the exception, because Trello itself accepts a rename on a closed
+list. `update trello list name set LIST_ID --name NAME --archived-list` relabels
+an archived list in place. Without the flag the open-list guard still applies, so
+a rename that did not expect to touch retired state fails closed; with it, an
+*open* list is refused instead. The flag declares which state the caller means,
+and a mismatch in either direction is reported rather than obeyed.
+
+The alternative is three mutations — unarchive, rename, archive — which leave the
+list live on the board in between, and leave it unarchived entirely if the rename
+fails. Prefixing retired lists for audit hygiene is the motivating case. Position
+changes get no such option: position on an archived list means nothing.
 
 ## MVP capabilities
 

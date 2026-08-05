@@ -739,14 +739,25 @@ func ExecuteWithFormat(d command.Definition, args []string, creds config.TrelloC
 		if len(args) < 2 {
 			return fmt.Errorf("%s requires LIST_ID and --name NAME", d.Name())
 		}
-		fields, err := named(args[1:], "name")
+		rest, renameArchived, err := takeFlag(args[1:], "--archived-list")
+		if err != nil {
+			return err
+		}
+		fields, err := named(rest, "name")
 		if err != nil {
 			return err
 		}
 		if fields["name"] == "" {
 			return fmt.Errorf("%s requires --name NAME", d.Name())
 		}
-		if err := c.requireOpenList(args[0]); err != nil {
+		// Trello accepts a rename on a closed list, so an archived list can be
+		// relabelled in place rather than unarchived, renamed, and re-archived --
+		// three mutations with the list briefly live on the board. The state is
+		// declared rather than inferred: --archived-list asserts the list is
+		// archived and is refused if it is open, so an ordinary rename that did not
+		// expect to touch retired state still fails closed. Position changes get no
+		// such option, because position on an archived list means nothing.
+		if err := c.requireListArchiveState(args[0], renameArchived); err != nil {
 			return err
 		}
 		var list map[string]any
@@ -1092,6 +1103,25 @@ func (c *Client) archiveListCards(listID string) ([]string, error) {
 		archivedIDs = append(archivedIDs, id)
 	}
 	return archivedIDs, nil
+}
+
+// requireListArchiveState confirms a list is in the archive state the caller
+// declared. Renaming a retired list and renaming a live one are different
+// intentions, so a mismatch in either direction means the caller is wrong about
+// which list this is, and is reported rather than silently obeyed.
+func (c *Client) requireListArchiveState(listID string, wantArchived bool) error {
+	var current map[string]any
+	if err := c.request(http.MethodGet, "/lists/"+url.PathEscape(listID), nil, &current); err != nil {
+		return err
+	}
+	closed, _ := current["closed"].(bool)
+	switch {
+	case closed && !wantArchived:
+		return fmt.Errorf("Trello list %s is archived; pass --archived-list to rename it in place, or unarchive it first", listID)
+	case !closed && wantArchived:
+		return fmt.Errorf("Trello list %s is not archived; omit --archived-list", listID)
+	}
+	return nil
 }
 
 func (c *Client) requireOpenCard(cardID string) error {
@@ -1647,6 +1677,25 @@ func exact(args []string, want int, name string) error {
 	}
 	return nil
 }
+
+// takeFlag removes a valueless flag from args and reports whether it was
+// present, so what remains can still be parsed as --NAME VALUE pairs.
+func takeFlag(args []string, flag string) ([]string, bool, error) {
+	remaining := make([]string, 0, len(args))
+	present := false
+	for _, arg := range args {
+		if arg != flag {
+			remaining = append(remaining, arg)
+			continue
+		}
+		if present {
+			return nil, false, fmt.Errorf("%s may be given only once", flag)
+		}
+		present = true
+	}
+	return remaining, present, nil
+}
+
 func named(args []string, allowed ...string) (map[string]string, error) {
 	result := map[string]string{}
 	valid := map[string]bool{}
