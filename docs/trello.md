@@ -56,18 +56,17 @@ omni observe trello board list --format json | jq -r '.boards[] | "\(.id)\t\(.na
 omni configure set trello.default-board-id BOARD_ID
 ```
 
-## Output and archive safety
+## Output and compact records
 
 Board overview returns board identity, description, short URL, and each list's
 ID, name, and archive state. To resolve or manage labels, use `observe trello
 label list BOARD_ID`: its records include the usable label ID, color, and name,
 and `observe trello label color list` enumerates every color a label operation
-accepts without calling Trello. Card
-observation returns the fields used for ordinary workflow work: identity, list
-and position,
-description, due and activity dates, members, labels, archive state, short
-URL, checklist IDs, and checklist progress in `badges`. It intentionally omits
-provider metadata that does not support a current Omni operation.
+accepts without calling Trello. Card observation returns the fields used for
+ordinary workflow work: identity, list and position, description, due and
+activity dates, members, labels, archive state, short URL, checklist IDs, and
+checklist progress in `badges`. It intentionally omits provider metadata that
+does not support a current Omni operation.
 
 The compact `badges` fields are workflow signals, not incidental provider
 noise: `checkItems` and `checkItemsChecked` are checklist progress,
@@ -90,6 +89,11 @@ spaces and colons, so `label:sylvanus is:archived` searches for a label named
 `sylvanus is:archived` and is rejected as unknown. Omni recognizes that shape and
 says so in the error rather than reporting a bare unknown label. Archive
 filtering is a separate option, not a query term.
+
+Card creation accepts repeatable `--label LABEL_ID` and `--member MEMBER_ID`
+options. Omni verifies every requested ID against the destination board before
+creating the card, then sends the relationships in Trello's initial card-create
+request so they cannot be silently dropped.
 
 ## Archived visibility
 
@@ -118,21 +122,20 @@ enumerated at all. Without card scope an archived card is invisible even in a
 list you already know about.
 
 This matters before any board-level removal. Trello's `uses` count on a label
-record includes cards an open-only read never shows, so it cannot be reconciled
-against `card search` results, and once the label is deleted it cannot be
-reconciled at all. Audit first with `observe trello card search label:NAME
---scope all`, and treat `uses` as a hint rather than an inventory.
-
-Card creation accepts repeatable `--label LABEL_ID` and `--member MEMBER_ID`
-options. Omni verifies every requested ID against the destination board before
-creating the card, then sends the relationships in Trello's initial card-create
-request so they cannot be silently dropped.
+record includes cards an open-only read never shows, so an open-only search
+cannot reconcile against it. Use `observe trello card search label:NAME --scope
+all` to see what a label actually covers before deciding to remove it, and treat
+`uses` as a hint rather than an inventory. `delete trello label delete` records
+the same evidence itself, so the audit is not left to memory; see
+[Labels](#labels).
 
 ## Labels
 
 Label operations distinguish board scope from card scope. `update trello card
 label add` and `update trello card label remove` change one card's labels and
-reverse each other.
+reverse each other. Labels themselves are board state rather than card state, so
+the archive guards below do not apply to them: a label can be changed or deleted
+while the cards carrying it are archived.
 
 `update trello label set LABEL_ID [--name NAME] [--color COLOR]` renames or
 recolors a label in place. Prefer it over delete-and-recreate whenever the
@@ -156,8 +159,7 @@ card IDs. The new label has a new ID and starts attached to nothing.
 
 Trello's `uses` count is reported next to the recorded cards so the two can be
 compared. If they disagree, something carried the label that Omni could not see,
-and that is the last moment the discrepancy is observable. Labels are
-board state rather than card state, so no archive guard applies.
+and that is the last moment the discrepancy is observable.
 
 Label colors are a fixed palette: the hues `green`, `yellow`, `orange`, `red`,
 `purple`, `blue`, `sky`, `lime`, `pink`, and `black`, each available unshaded or
@@ -169,8 +171,10 @@ rejected locally with the full palette in the error, before any request is sent.
 Colorless labels are legitimate and Omni round-trips them: `--color none` sends
 the explicit null Trello requires, and `delete` reports a colorless label as a
 null color in JSON and as `-` in text. `--color` stays required on `label
-create` rather than defaulting to colorless, because a colorless label is nearly
-invisible on a board and should be a deliberate choice.
+create` rather than defaulting to colorless, so that an omitted flag cannot
+silently choose the one value that renders as no color at all.
+
+## Archive guards
 
 `move trello card move` and other card mutations refuse archived cards. Restore
 a card deliberately with `update trello card unarchive CARD_ID`; archive and
@@ -194,14 +198,15 @@ changes get no such option: position on an archived list means nothing.
 
 ## MVP capabilities
 
-The Trello MVP supports compact card enumeration and search; attachment list,
-download, upload, and deletion; checklist item inspection, completion, and rename; card updates,
-due-date completion, and explicit unarchive; board-description updates; list
-creation, rename, archive, and unarchive; comments; board label listing,
-creation, rename, recolor, and deletion; board
-members; card member and label assignment; and compact card activity. Use
-`omni describe trello` for the exact action-first command forms and their
-safety constraints.
+The Trello MVP supports compact card enumeration and search, both able to read
+archived cards; attachment list, download, upload, and deletion; checklist item
+inspection, completion, and rename; card updates, due-date completion, and
+explicit unarchive; board-description updates; list enumeration including
+archived lists; list creation, archive, unarchive, and rename, in place even when
+archived; comments; the full board label lifecycle of listing, color
+enumeration, creation, rename, recolor, and deletion; board members; card member
+and label assignment; and compact card activity. Use `omni describe trello` for
+the exact action-first command forms and their safety constraints.
 
 The previous t3m MCP routes are represented by explicit CLI operations. Omni
 does not carry t3m's `full_details` switches: those alter response size rather

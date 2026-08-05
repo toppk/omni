@@ -15,7 +15,7 @@ local policy enforcement, and tested API request paths.
 
 | Service | What Omni can do today |
 | --- | --- |
-| [Trello](docs/trello.md) | Observe boards, lists, and cards; create, move, archive, and delete cards. |
+| [Trello](docs/trello.md) | Observe boards, lists, and cards, archived ones included; create, move, archive, and delete cards; manage board labels. |
 | [Tailscale](docs/tailscale.md) | Observe devices, routes, users, and policy; deliberately update names, tags, and policy files. |
 
 ```bash
@@ -95,7 +95,9 @@ explicit `--format text|json` overrides it. JSON remains the stable contract
 for agents and scripts; text is rendered from the same compact response. Text
 card collections are deliberately scan-oriented (name, checklist progress,
 labels, member initials, due date, and list), while JSON retains the complete
-compact card record.
+compact card record. A null or empty value renders as `-` in text so a real
+value that happens to be absent, such as a Trello label with no color, cannot be
+mistaken for a rendering failure; JSON keeps the original `null`.
 
 ## Trello commands
 
@@ -114,7 +116,27 @@ omni archive trello card archive CARD_ID
 omni delete trello card delete CARD_ID
 ```
 
-The first four are `observe` commands. The change operations have their own action-level prefix, so no flag can transform an approved observation into a modification.
+Reads return open records only unless asked otherwise. Card and list reads accept
+`--scope open|archived|all` and report the scope they used, so an archived card or
+a retired list cannot hide behind a result that looks complete:
+
+```bash
+omni observe trello card search "label:blocked" --scope all
+omni observe trello list list --scope archived
+```
+
+Board labels have a full lifecycle. Renaming or recoloring one keeps its ID, so
+every card carrying it keeps carrying it; deleting one detaches it from every card
+on the board, so the delete records which cards carried it before removing them:
+
+```bash
+omni observe trello label color list
+omni create trello label create BOARD_ID --name "blocked" --color red_bold
+omni update trello label set LABEL_ID --name "blocked-q3"
+omni delete trello label delete LABEL_ID
+```
+
+The first four commands above are `observe` commands. The change operations have their own action-level prefix, so no flag can transform an approved observation into a modification.
 
 ## Tailscale commands
 
