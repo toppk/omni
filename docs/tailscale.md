@@ -53,7 +53,7 @@ shown in your Trust credentials UI.
 | devices: list and get | `devices:core:read` | `devices:core` for name, tag, authorization, expiry, or removal changes |
 | device routes | `devices:routes:read` | none in Omni's current surface |
 | users | `users:read` | none in Omni's current surface |
-| ACL get, validate, preview | `acl:read` or `policy_file:read` | `acl` or `policy_file` for `administer tailscale acl set` |
+| ACL get, validate, preview, tag list | `acl:read` or `policy_file:read` | `acl` or `policy_file` for `administer tailscale acl set` |
 | DNS snapshot | `dns:read` | none in Omni's current surface |
 | auth keys | `auth_keys:read` | `auth_keys` to create or revoke |
 | API-token metadata | `api_access_tokens:read` | `api_access_tokens` to revoke |
@@ -175,6 +175,26 @@ omni observe tailscale acl preview --for tag:github --file ACL.hujson
 The preview is evaluated by Tailscale rather than a local HuJSON approximation;
 it returns the matching rules without applying the candidate file.
 
+## Tags
+
+Tags are defined in the policy file, so listing them is a policy read rather
+than a device read:
+
+```bash
+omni observe tailscale tag list
+```
+
+It reports every tag the tailnet defines with that tag's policy owners, ordered
+by tag name. It requires the ACL read scope, and it requests the policy as JSON
+rather than parsing the HuJSON default locally. Because the source is
+`tagOwners`, a defined tag appears whether or not any device currently carries
+it; `observe tailscale device list --details` reports the tags actually in use.
+
+The admin console populates its own tag picker from a private endpoint under
+`login.tailscale.com/admin/api/public/`, which is authenticated by a console
+session rather than by an API credential. Omni derives the same names and
+owners from the documented public API instead.
+
 ## Enrollment, device lifecycle, keys, and DNS
 
 Read-only key inspection reports accessible key IDs and metadata such as key
@@ -213,7 +233,19 @@ omni create tailscale key auth create \
 Omit `--preauthorized` when enrollment must remain pending until a separately
 approved authorization operation. `--reusable` allows more than one device to
 use the key, and `--ephemeral` requests automatic cleanup for short-lived
-nodes. Revoke the credential as soon as the enrollment window closes:
+nodes. `--description` and `--expiry-seconds` are optional; Tailscale defaults
+an unspecified lifetime to its own maximum, and it owns the accepted bounds for
+both values rather than Omni rejecting them locally.
+
+Whether `--tag` is optional depends on which credential creates the key.
+Tailscale treats a key created by an OAuth client as owned by the tailnet, and
+such a key must carry tags that exactly match the OAuth client's own tags, or
+tags those client tags own. A key created with an API access token is owned by a
+user, where tags are genuinely optional. So with an OAuth client, supply
+`--tag`: use `observe tailscale credential get` for the tags the client itself
+carries and `observe tailscale tag list` for the ownership those tags confer.
+
+Revoke the credential as soon as the enrollment window closes:
 
 ```bash
 omni delete tailscale key revoke KEY_ID

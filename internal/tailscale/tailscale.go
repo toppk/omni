@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -392,6 +393,31 @@ func (c *Client) executeWithFormat(d command.Definition, args []string, format o
 			return err
 		}
 		result = map[string]string{"acl_file": aclFile, "backup_file": backupFile, "etag": etag, "status": "accepted"}
+	case "observe tailscale tag list":
+		if err := exact(args, 0, d.Name()); err != nil {
+			return err
+		}
+		// Tags are defined by tagOwners in the policy file, so ask for the
+		// policy as JSON rather than parsing its HuJSON default locally.
+		data, _, err := c.requestWithHeaders(http.MethodGet, c.tailnetPath("/acl"), "", nil, http.Header{"Accept": {"application/json"}})
+		if err != nil {
+			return err
+		}
+		var policy struct {
+			TagOwners map[string][]string `json:"tagOwners"`
+		}
+		if err := json.Unmarshal(data, &policy); err != nil {
+			return decode(err)
+		}
+		tags := make([]map[string]any, 0, len(policy.TagOwners))
+		for _, name := range sortedNames(policy.TagOwners) {
+			owners := policy.TagOwners[name]
+			if owners == nil {
+				owners = []string{}
+			}
+			tags = append(tags, map[string]any{"name": name, "owners": owners})
+		}
+		result = map[string]any{"tags": tags}
 	case "observe tailscale key list":
 		all, err := keyListOptions(args)
 		if err != nil {
@@ -730,6 +756,17 @@ func compactKey(value map[string]any) map[string]any {
 		}
 	}
 	return result
+}
+
+// sortedNames orders map keys so a collection built from a provider object has
+// a stable order in both output formats.
+func sortedNames[T any](values map[string]T) []string {
+	names := make([]string, 0, len(values))
+	for name := range values {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 func pick(value map[string]any, keys ...string) map[string]any {
 	result := make(map[string]any)

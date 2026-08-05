@@ -553,6 +553,62 @@ func TestACLSetBackupCollisionExplainsRecovery(t *testing.T) {
 	}
 }
 
+func TestTagListReadsPolicyTagOwnersAsJSON(t *testing.T) {
+	c := testClient(t, func(r *http.Request) (*http.Response, error) {
+		if r.Method != http.MethodGet || r.URL.Path != "/tailnet/-/acl" {
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+		if accept := r.Header.Get("Accept"); accept != "application/json" {
+			t.Fatalf("Accept = %q; HuJSON would need local parsing", accept)
+		}
+		return response(`{"tagOwners":{"tag:server":["owner@example.com"],"tag:endpoint":["owner@example.com","other@example.com"],"tag:guest":[]},"acls":[{"action":"accept","src":["tag:server"],"dst":["*:*"]}],"groups":{"group:example":["owner@example.com"]}}`, nil), nil
+	})
+	var out bytes.Buffer
+	if err := c.execute(definition(t, "observe", "tailscale", "tag", "list"), nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	text := out.String()
+	if text != `{"tags":[{"name":"tag:endpoint","owners":["owner@example.com","other@example.com"]},{"name":"tag:guest","owners":[]},{"name":"tag:server","owners":["owner@example.com"]}]}`+"\n" {
+		t.Fatalf("tag output = %s", text)
+	}
+	if strings.Contains(text, "acls") || strings.Contains(text, "group:example") {
+		t.Fatalf("tag list must report only tag ownership: %s", text)
+	}
+}
+
+func TestTagListReportsNoTagsForPolicyWithoutTagOwners(t *testing.T) {
+	c := testClient(t, func(*http.Request) (*http.Response, error) {
+		return response(`{"acls":[{"action":"accept","users":["*"],"ports":["*:*"]}]}`, nil), nil
+	})
+	var out bytes.Buffer
+	if err := c.execute(definition(t, "observe", "tailscale", "tag", "list"), nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.String() != `{"tags":[]}`+"\n" {
+		t.Fatalf("empty tag output = %s", out.String())
+	}
+}
+
+func TestTagListPermissionErrorNamesACLReadScope(t *testing.T) {
+	c := testClient(t, func(*http.Request) (*http.Response, error) {
+		return responseStatus(http.StatusForbidden, "403 Forbidden", "forbidden"), nil
+	})
+	err := c.execute(definition(t, "observe", "tailscale", "tag", "list"), nil, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "acl:read") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestTagListRejectsUnexpectedArguments(t *testing.T) {
+	c := testClient(t, func(*http.Request) (*http.Response, error) {
+		t.Fatal("argument validation must precede the request")
+		return nil, nil
+	})
+	if err := c.execute(definition(t, "observe", "tailscale", "tag", "list"), []string{"tag:server"}, &bytes.Buffer{}); err == nil {
+		t.Fatal("extra argument was accepted")
+	}
+}
+
 func TestKeyListReturnsMetadataWithoutSecret(t *testing.T) {
 	c := testClient(t, func(r *http.Request) (*http.Response, error) {
 		if r.Method != http.MethodGet || r.URL.Path != "/tailnet/-/keys" {
