@@ -71,7 +71,40 @@ When adding a command, test at least:
 - the command schema metadata and action-first path;
 - policy behavior for its effect class;
 - provider request shape and credential redaction where applicable;
-- human and JSON discovery output for new service capabilities.
+- human and JSON discovery output for new service capabilities;
+- that a destructive command reads and reports whatever its own mutation is about
+  to make unrecoverable, before mutating.
+
+### Values validated before a write
+
+Validating an operator-supplied value against a fixed set gives a better error
+than the provider does, and Omni should keep doing it. The hazard is where the
+fixed set comes from. A vendored provider spec ages silently, and it ages exactly
+where the vendor has added something, so a set copied from one starts rejecting
+input the provider already accepts. That failure presents to an operator as "Omni
+does not support this" rather than "Omni's copy is stale", and it only fires on
+values the vendor added, which makes it look arbitrary.
+
+The severity is asymmetric, which bounds the work: a stale set gating a **write**
+rejects valid input, while a stale set interpreting a **read** usually degrades to
+an unknown value and survives. Strict treatment is only required on write paths.
+
+So every fixed set of accepted values is classified in `closedVocabularies` in
+`internal/command/command_test.go`, and a test fails when a new one appears
+unclassified:
+
+- `omni` — Omni's own vocabulary, mapped onto provider values internally. It can
+  only reject values Omni never offered.
+- `pinned` — copied from a provider, and pinned by a test proving every value
+  obtainable from a read is accepted by the write validator. See
+  `internal/trello/testdata/README.md`, which vendors a live capture for exactly
+  this and asserts its own coverage, so a refreshed capture that lost coverage
+  fails instead of passing by construction.
+- `passthru` — not validated locally; the provider decides.
+
+Vendor the capture rather than reading the provider live: tests must stay offline
+and deterministic. The board a capture came from is a regeneration source, not a
+dependency.
 
 ## Cutting a release
 
