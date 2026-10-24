@@ -55,6 +55,26 @@ func TestLoadEphemeralTailscaleTokenMetadataOmitsSecret(t *testing.T) {
 	}
 }
 
+func TestClearEphemeralTailscaleTokenPreservesOtherValues(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ephemeral", "credentials.toml")
+	if err := StoreEphemeralTailscaleToken(path, "token", time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := Set(path, "trello.api-key", "other-value"); err != nil {
+		t.Fatal(err)
+	}
+	cleared, err := ClearEphemeralTailscaleToken(path)
+	if err != nil || !cleared {
+		t.Fatalf("cleared=%t err=%v", cleared, err)
+	}
+	if token, err := LoadEphemeralTailscaleToken(path, time.Now()); err != nil || token != "" {
+		t.Fatalf("token=%q err=%v", token, err)
+	}
+	if value, err := Get(path, "trello.api-key"); err != nil || value != "other-value" {
+		t.Fatalf("preserved value=%q err=%v", value, err)
+	}
+}
+
 func TestSetWritesAndUpdatesRegistryKey(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.toml")
 	if err := os.WriteFile(path, []byte("policy = \"default\"\n"), 0600); err != nil {

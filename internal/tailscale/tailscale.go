@@ -252,7 +252,7 @@ func (c *Client) executeWithFormat(d command.Definition, args []string, format o
 			return fmt.Errorf("%s requires DEVICE_ID and at least one TAG", d.Name())
 		}
 		if _, _, err := c.json(http.MethodPost, "/device/"+url.PathEscape(args[0])+"/tags", map[string][]string{"tags": args[1:]}); err != nil {
-			return err
+			return c.tagAssignmentError(err, args[1:])
 		}
 		result = map[string]any{"device_id": args[0], "tags": args[1:]}
 	case "authorize tailscale device authorization set":
@@ -460,6 +460,15 @@ func (c *Client) executeWithFormat(d command.Definition, args []string, format o
 			return err
 		}
 		result = map[string]any{"credential": c.credentialReport()}
+	case "update tailscale credential refresh":
+		if err := exact(args, 0, d.Name()); err != nil {
+			return err
+		}
+		refreshed, err := c.refreshCredential()
+		if err != nil {
+			return err
+		}
+		result = refreshed
 	case "create tailscale key auth create":
 		options, err := authKeyCreateOptions(args, d.Name())
 		if err != nil {
@@ -613,6 +622,47 @@ func (c *Client) credentialReport() map[string]any {
 		}
 	}
 	return report
+}
+
+func (c *Client) refreshCredential() (map[string]any, error) {
+	if c.creds.APIKey != "" {
+		return map[string]any{
+			"auth_method": "api_access_token",
+			"refreshed":   false,
+			"reason":      "tailscale.api-key is configured; Omni does not mint or cache an OAuth token while the explicit API-token override is active",
+		}, nil
+	}
+	if c.cachePath == "" {
+		return nil, fmt.Errorf("Tailscale OAuth token refresh requires an ephemeral credential cache path")
+	}
+	cleared, err := config.ClearEphemeralTailscaleToken(c.cachePath)
+	if err != nil {
+		return nil, err
+	}
+	c.accessToken = ""
+	if _, err := c.token(); err != nil {
+		return nil, fmt.Errorf("refresh Tailscale OAuth token after clearing cache: %w", err)
+	}
+	metadata, err := config.LoadEphemeralTailscaleTokenMetadata(c.cachePath, time.Now())
+	if err != nil {
+		return nil, fmt.Errorf("read refreshed Tailscale token metadata: %w", err)
+	}
+	result := map[string]any{
+		"auth_method":   "oauth_client",
+		"cache_cleared": cleared,
+		"refreshed":     true,
+	}
+	if !metadata.ExpiresAt.IsZero() {
+		result["expires_at"] = metadata.ExpiresAt.UTC().Format(time.RFC3339)
+	}
+	return result, nil
+}
+
+func (c *Client) tagAssignmentError(err error, tags []string) error {
+	if c.creds.APIKey != "" || !strings.Contains(err.Error(), "requested tags") {
+		return err
+	}
+	return fmt.Errorf("%w; OAuth tag assignment requires the requested tag set [%s] to exactly match the credential's complete tag set, or each requested tag to be directly owned by one of the credential's tags in tagOwners. Run 'omni observe tailscale credential get' to inspect credential tags and 'omni observe tailscale tag list' to inspect tag owners", err, strings.Join(tags, ", "))
 }
 
 func (c *Client) redactCredentialError(message string) string {

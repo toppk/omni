@@ -92,6 +92,18 @@ remote scopes and tags when `oauth_keys:read` allows its key metadata to be
 read. If that metadata is unavailable, the structured `scope_error` includes
 the missing-scope guidance without exposing the client secret or access token.
 
+After changing an OAuth client's scopes or tags, explicitly mint a replacement
+token instead of waiting for Omni's cached token to expire:
+
+```bash
+omni update tailscale credential refresh
+```
+
+This discards only Omni's cached OAuth access token and expiry, then immediately
+mints and caches a replacement. It never prints either token. It is a no-op
+when `tailscale.api-key` is the active explicit-token override, because Omni
+does not mint an OAuth token in that configuration.
+
 Device lists default to only `id`, `hostname`, `os`, and `lastSeen`. Add
 `--details` to include addresses, client version, tags, ownership, and related
 selection context without issuing a separate `get` request for every device.
@@ -244,6 +256,24 @@ tags those client tags own. A key created with an API access token is owned by a
 user, where tags are genuinely optional. So with an OAuth client, supply
 `--tag`: use `observe tailscale credential get` for the tags the client itself
 carries and `observe tailscale tag list` for the ownership those tags confer.
+
+The same rule governs `authorize tailscale device tag set`. For an OAuth
+client or auth key, the requested device-tag set must either exactly match the
+credential's complete tag set, or every requested tag must be directly owned
+by one of the credential's tags in the policy's `tagOwners` map. This is a
+set-level check: an OAuth client carrying `[tag:server, tag:guest]` cannot
+assign only `[tag:guest]` merely because `tag:guest` appears on the client.
+To permit that subset, define direct ownership such as:
+
+```hujson
+"tagOwners": {
+  "tag:guest": ["tag:server"],
+},
+```
+
+Then validate and apply the ACL through Omni's guarded policy workflow. Use
+`omni observe tailscale credential get` to inspect the credential tags and
+`omni observe tailscale tag list` to inspect the current `tagOwners` entries.
 
 Revoke the credential as soon as the enrollment window closes:
 

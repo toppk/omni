@@ -170,6 +170,7 @@ omni administer tailscale acl set acl.hujson --backup acl-before-change.hujson
 omni observe tailscale key list
 omni observe tailscale key get KEY_ID
 omni observe tailscale credential get
+omni update tailscale credential refresh
 omni create tailscale key auth create --output enrollment.key --tag tag:server
 omni delete tailscale key revoke KEY_ID
 omni observe tailscale dns get

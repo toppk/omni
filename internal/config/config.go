@@ -133,6 +133,20 @@ func LoadEphemeralTailscaleTokenMetadata(path string, now time.Time) (TailscaleT
 	return metadata, nil
 }
 
+// ClearEphemeralTailscaleToken removes only the cached OAuth access token and
+// its expiry. It preserves unrelated ephemeral values and the private file.
+func ClearEphemeralTailscaleToken(path string) (bool, error) {
+	deletedToken, err := Delete(path, "tailscale.generated-api-key")
+	if err != nil {
+		return false, fmt.Errorf("clear cached Tailscale token: %w", err)
+	}
+	deletedExpiry, err := Delete(path, "tailscale.generated-api-key-expires-at")
+	if err != nil {
+		return false, fmt.Errorf("clear cached Tailscale token expiry: %w", err)
+	}
+	return deletedToken || deletedExpiry, nil
+}
+
 func StoreEphemeralTailscaleToken(path, token string, expiresAt time.Time) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err

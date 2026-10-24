@@ -238,6 +238,60 @@ func TestCredentialGetReportsUnavailableOAuthScopeMetadata(t *testing.T) {
 	}
 }
 
+func TestCredentialRefreshMintsNewOAuthTokenWithoutOutputLeak(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "ephemeral", "credentials.toml")
+	if err := config.StoreEphemeralTailscaleToken(cachePath, "old-token", time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	c := NewClientWithCache(config.TailscaleCredentials{ClientSecret: "secret-value"}, config.TailscaleSettings{APIURL: "https://example.test", Tailnet: "-", ClientID: "k-client"}, cachePath)
+	c.http = &http.Client{Transport: roundTripper(func(r *http.Request) (*http.Response, error) {
+		if r.Method != http.MethodPost || r.URL.Path != "/oauth/token" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		return response(`{"access_token":"new-token","expires_in":3600}`, nil), nil
+	})}
+	var out bytes.Buffer
+	if err := c.execute(definition(t, "update", "tailscale", "credential", "refresh"), nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), `"refreshed":true`) || !strings.Contains(out.String(), `"cache_cleared":true`) || strings.Contains(out.String(), "old-token") || strings.Contains(out.String(), "new-token") || strings.Contains(out.String(), "secret-value") {
+		t.Fatalf("refresh output = %s", out.String())
+	}
+	if token, err := config.LoadEphemeralTailscaleToken(cachePath, time.Now()); err != nil || token != "new-token" {
+		t.Fatalf("cached token=%q err=%v", token, err)
+	}
+}
+
+func TestCredentialRefreshSkipsExplicitAPITokenWithoutNetwork(t *testing.T) {
+	called := false
+	c := testClient(t, func(*http.Request) (*http.Response, error) {
+		called = true
+		return nil, nil
+	})
+	var out bytes.Buffer
+	if err := c.execute(definition(t, "update", "tailscale", "credential", "refresh"), nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	if called || !strings.Contains(out.String(), `"refreshed":false`) || strings.Contains(out.String(), "tskey-api-secret") {
+		t.Fatalf("called=%t output=%s", called, out.String())
+	}
+}
+
+func TestTagAssignmentErrorExplainsOAuthTagOwnership(t *testing.T) {
+	c := NewClient(config.TailscaleCredentials{ClientSecret: "secret-value"}, config.TailscaleSettings{APIURL: "https://example.test", Tailnet: "-", ClientID: "k-client"})
+	c.http = &http.Client{Transport: roundTripper(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path == "/oauth/token" {
+			return response(`{"access_token":"issued-token","expires_in":3600}`, nil), nil
+		}
+		return responseStatus(http.StatusBadRequest, "400 Bad Request", `{"message":"requested tags [tag:guest] are invalid or not permitted"}`), nil
+	})}
+	var out bytes.Buffer
+	err := c.execute(definition(t, "authorize", "tailscale", "device", "tag", "set"), []string{"dev1", "tag:guest"}, &out)
+	if err == nil || !strings.Contains(err.Error(), "exactly match") || !strings.Contains(err.Error(), "tagOwners") || !strings.Contains(err.Error(), "tag:guest") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestAuthKeyCreateWritesSecretOnlyToPrivateFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "enrollment.key")
 	c := testClient(t, func(r *http.Request) (*http.Response, error) {
