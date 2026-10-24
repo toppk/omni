@@ -54,7 +54,7 @@ if [ -e "$target" ]; then
   fi
   previous_version=$("$target" --version 2>/dev/null || true)
   case "$previous_version" in
-    "omni v"[0-9]*|"omni dev") ;;
+    "omni v"[0-9]*|"omni dev"|"omni dev-"[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) ;;
     *) echo "refusing to replace $target: it does not identify as an Omni build." >&2; exit 1 ;;
   esac
 else
