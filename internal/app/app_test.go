@@ -160,13 +160,23 @@ func TestVersionAliases(t *testing.T) {
 	}
 }
 
+func TestChangelogPointsToLatestGitHubReleaseNotes(t *testing.T) {
+	var out bytes.Buffer
+	if err := Run(context.Background(), []string{"changelog"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := out.String(), releaseNotesURL+"\n"; got != want {
+		t.Fatalf("changelog = %q, want %q", got, want)
+	}
+}
+
 func TestRootHelpShowsServiceReadinessAndDiscovery(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	var out bytes.Buffer
 	if err := Run(context.Background(), nil, &out, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"trello     needs setup", "tailscale  needs setup", "omni describe trello", "omni configure --help"} {
+	for _, want := range []string{"trello     needs setup", "tailscale  needs setup", "omni describe trello", "omni configure --help", "omni changelog"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("root help missing %q: %s", want, out.String())
 		}

@@ -20,10 +20,13 @@ import (
 // intentionally retain the development value rather than a checked-in version.
 var Version = "dev"
 
+const releaseNotesURL = "https://github.com/toppk/omni/releases/latest"
+
 const usage = `Omni is a safety-oriented CLI for service APIs.
 
 Usage:
   omni describe [SERVICE] [--format text|json]
+  omni changelog
   omni describe <effect> <service> <resource> <verb>
   omni setup SERVICE
   omni configure SERVICE [OPTIONS]
@@ -39,7 +42,8 @@ machine-readable default, or use --format text|json after the effect.
 
 Use "omni describe" to discover services and their operations. Use
 "omni configure --help" for low-level registry commands, or "omni version"
-for the installed version.
+for the installed version. Use "omni changelog" to see what changed in the
+latest release.
 `
 
 const trelloConfigUsage = `Trello configuration
@@ -94,6 +98,10 @@ For service-specific options, run "omni configure SERVICE --help".
 func Run(_ context.Context, args []string, out, errOut io.Writer) error {
 	if len(args) == 1 && (args[0] == "version" || args[0] == "--version" || args[0] == "-V") {
 		_, err := fmt.Fprintf(out, "omni %s\n", Version)
+		return err
+	}
+	if len(args) == 1 && args[0] == "changelog" {
+		_, err := fmt.Fprintln(out, releaseNotesURL)
 		return err
 	}
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
