@@ -106,6 +106,7 @@ func LoadEphemeralTailscaleToken(path string, now time.Time) (string, error) {
 type TailscaleTokenMetadata struct {
 	Cached    bool
 	Valid     bool
+	IssuedAt  time.Time
 	ExpiresAt time.Time
 }
 
@@ -122,6 +123,16 @@ func LoadEphemeralTailscaleTokenMetadata(path string, now time.Time) (TailscaleT
 		return TailscaleTokenMetadata{}, err
 	}
 	metadata := TailscaleTokenMetadata{Cached: true}
+	issuedAt, err := Get(path, "tailscale.generated-api-key-issued-at")
+	if err != nil {
+		return TailscaleTokenMetadata{}, err
+	}
+	if issuedAt != "" {
+		metadata.IssuedAt, err = time.Parse(time.RFC3339, issuedAt)
+		if err != nil {
+			return TailscaleTokenMetadata{}, fmt.Errorf("parse cached Tailscale token issue time: %w", err)
+		}
+	}
 	if expires == "" {
 		return metadata, nil
 	}
@@ -134,7 +145,7 @@ func LoadEphemeralTailscaleTokenMetadata(path string, now time.Time) (TailscaleT
 }
 
 // ClearEphemeralTailscaleToken removes only the cached OAuth access token and
-// its expiry. It preserves unrelated ephemeral values and the private file.
+// its metadata. It preserves unrelated ephemeral values and the private file.
 func ClearEphemeralTailscaleToken(path string) (bool, error) {
 	deletedToken, err := Delete(path, "tailscale.generated-api-key")
 	if err != nil {
@@ -144,7 +155,11 @@ func ClearEphemeralTailscaleToken(path string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("clear cached Tailscale token expiry: %w", err)
 	}
-	return deletedToken || deletedExpiry, nil
+	deletedIssuedAt, err := Delete(path, "tailscale.generated-api-key-issued-at")
+	if err != nil {
+		return false, fmt.Errorf("clear cached Tailscale token issue time: %w", err)
+	}
+	return deletedToken || deletedExpiry || deletedIssuedAt, nil
 }
 
 func StoreEphemeralTailscaleToken(path, token string, expiresAt time.Time) error {
@@ -165,6 +180,9 @@ func StoreEphemeralTailscaleToken(path, token string, expiresAt time.Time) error
 		return err
 	}
 	if err := Set(path, "tailscale.generated-api-key-expires-at", expiresAt.UTC().Format(time.RFC3339)); err != nil {
+		return err
+	}
+	if err := Set(path, "tailscale.generated-api-key-issued-at", time.Now().UTC().Format(time.RFC3339)); err != nil {
 		return err
 	}
 	return os.Chmod(path, 0600)

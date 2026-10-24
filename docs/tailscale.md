@@ -87,10 +87,14 @@ omni observe tailscale credential get
 When an explicit API access token is configured, it wins and the report names
 that method and its logical configuration source. Its permissions follow the
 owning user and cannot safely be derived from the local secret. For OAuth, the
-report includes the client ID, cached access-token expiry, and the client's
-remote scopes and tags when `oauth_keys:read` allows its key metadata to be
-read. If that metadata is unavailable, the structured `scope_error` includes
-the missing-scope guidance without exposing the client secret or access token.
+report includes the client ID, cached access-token issue and expiry times, and
+the client's remote scopes and tags when `oauth_keys:read` allows its key
+metadata to be read. When both timestamps are available,
+`token_cache.minted_before_client_updated` says whether the cached token
+predates the client's current `updated` time, making a refresh decision
+auditable without exposing a token. If that metadata is unavailable, the
+structured `scope_error` includes the missing-scope guidance without exposing
+the client secret or access token.
 
 After changing an OAuth client's scopes or tags, explicitly mint a replacement
 token instead of waiting for Omni's cached token to expire:
@@ -105,8 +109,16 @@ when `tailscale.api-key` is the active explicit-token override, because Omni
 does not mint an OAuth token in that configuration.
 
 Device lists default to only `id`, `hostname`, `os`, and `lastSeen`. Add
-`--details` to include addresses, client version, tags, ownership, and related
-selection context without issuing a separate `get` request for every device.
+`--details` to include addresses, client version, tags, registration
+provenance, connection and posture fields, and related selection context
+without issuing a separate `get` request for every device. Omni reports the
+Tailscale API's `user` field as `registered_by`: tagged devices identify as
+their tags, so this is the enrolling user, not their current tailnet identity.
+For `device get --details`, Omni requests Tailscale's full device record and
+returns a curated non-secret subset, including advertised and enabled routes,
+control connection state, posture identity, ephemeral/external state, and
+tailnet-lock errors. It does not retrieve custom posture attributes; those use
+Tailscale's separate `devices:posture_attributes:read` API scope.
 
 ## Setup
 
@@ -257,13 +269,15 @@ user, where tags are genuinely optional. So with an OAuth client, supply
 `--tag`: use `observe tailscale credential get` for the tags the client itself
 carries and `observe tailscale tag list` for the ownership those tags confer.
 
-The same rule governs `authorize tailscale device tag set`. For an OAuth
-client or auth key, the requested device-tag set must either exactly match the
-credential's complete tag set, or every requested tag must be directly owned
-by one of the credential's tags in the policy's `tagOwners` map. This is a
-set-level check: an OAuth client carrying `[tag:server, tag:guest]` cannot
-assign only `[tag:guest]` merely because `tag:guest` appears on the client.
-To permit that subset, define direct ownership such as:
+Tailscale documents the same matching and ownership constraints for
+`authorize tailscale device tag set`. Omni presents them as checks to inspect,
+not as a complete diagnosis: the API's `requested tags are invalid or not
+permitted` response does not identify which authorization or device-specific
+condition failed. A credential's tags, current `tagOwners`, and
+`device get --details` may all be relevant; preserve the device IDs and the
+raw Tailscale error when escalating an unexplained per-device difference.
+Where the documented ownership rule is the intended policy, define direct
+ownership such as:
 
 ```hujson
 "tagOwners": {

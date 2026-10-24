@@ -50,7 +50,7 @@ func TestLoadEphemeralTailscaleTokenMetadataOmitsSecret(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !metadata.Cached || !metadata.Valid || !metadata.ExpiresAt.Equal(expiresAt) {
+	if !metadata.Cached || !metadata.Valid || metadata.IssuedAt.IsZero() || !metadata.ExpiresAt.Equal(expiresAt) {
 		t.Fatalf("metadata = %#v", metadata)
 	}
 }

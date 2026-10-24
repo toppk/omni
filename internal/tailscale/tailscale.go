@@ -176,7 +176,11 @@ func (c *Client) executeWithFormat(d command.Definition, args []string, format o
 		if err != nil {
 			return err
 		}
-		data, _, err := c.request(http.MethodGet, c.tailnetPath("/devices"), "", nil)
+		endpoint := c.tailnetPath("/devices")
+		if details {
+			endpoint += "?fields=all"
+		}
+		data, _, err := c.request(http.MethodGet, endpoint, "", nil)
 		if err != nil {
 			return err
 		}
@@ -202,7 +206,11 @@ func (c *Client) executeWithFormat(d command.Definition, args []string, format o
 		if err != nil {
 			return err
 		}
-		data, _, err := c.request(http.MethodGet, "/device/"+url.PathEscape(args[0]), "", nil)
+		endpoint := "/device/" + url.PathEscape(args[0])
+		if details {
+			endpoint += "?fields=all"
+		}
+		data, _, err := c.request(http.MethodGet, endpoint, "", nil)
 		if err != nil {
 			return err
 		}
@@ -595,6 +603,7 @@ func (c *Client) credentialReport() map[string]any {
 		return report
 	}
 	report["configuration_status"] = "configured"
+	var clientUpdatedAt time.Time
 	data, _, err := c.request(http.MethodGet, c.tailnetPath("/keys/")+url.PathEscape(c.clientID), "", nil)
 	if err != nil {
 		report["scope_status"] = "unavailable"
@@ -607,6 +616,9 @@ func (c *Client) credentialReport() map[string]any {
 		} else {
 			report["scope_status"] = "available"
 			report["client"] = compactKey(key)
+			if updated, ok := key["updated"].(string); ok {
+				clientUpdatedAt, _ = time.Parse(time.RFC3339, updated)
+			}
 		}
 	}
 	if c.cachePath != "" {
@@ -617,6 +629,12 @@ func (c *Client) credentialReport() map[string]any {
 			cache := map[string]any{"cached": metadata.Cached, "valid": metadata.Valid, "source": "tailscale.generated-api-key"}
 			if !metadata.ExpiresAt.IsZero() {
 				cache["expires_at"] = metadata.ExpiresAt.UTC().Format(time.RFC3339)
+			}
+			if !metadata.IssuedAt.IsZero() {
+				cache["issued_at"] = metadata.IssuedAt.UTC().Format(time.RFC3339)
+			}
+			if !metadata.IssuedAt.IsZero() && !clientUpdatedAt.IsZero() {
+				cache["minted_before_client_updated"] = metadata.IssuedAt.Before(clientUpdatedAt)
 			}
 			report["token_cache"] = cache
 		}
@@ -662,7 +680,7 @@ func (c *Client) tagAssignmentError(err error, tags []string) error {
 	if c.creds.APIKey != "" || !strings.Contains(err.Error(), "requested tags") {
 		return err
 	}
-	return fmt.Errorf("%w; OAuth tag assignment requires the requested tag set [%s] to exactly match the credential's complete tag set, or each requested tag to be directly owned by one of the credential's tags in tagOwners. Run 'omni observe tailscale credential get' to inspect credential tags and 'omni observe tailscale tag list' to inspect tag owners", err, strings.Join(tags, ", "))
+	return fmt.Errorf("%w; Tailscale documents OAuth tag-set matching and tagOwners as possible authorization constraints for requested tags [%s], but this response does not identify the failing condition. Inspect the credential with 'omni observe tailscale credential get', policy ownership with 'omni observe tailscale tag list', and device evidence with 'omni observe tailscale device get --details'", err, strings.Join(tags, ", "))
 }
 
 func (c *Client) redactCredentialError(message string) string {
@@ -779,16 +797,25 @@ func stringValues(value any) []string {
 func compactDeviceList(value map[string]any, details bool) map[string]any {
 	keys := []string{"id", "hostname", "os", "lastSeen"}
 	if details {
-		keys = append(keys, "name", "user", "addresses", "tags", "authorized", "clientVersion", "expires", "keyExpiryDisabled")
+		keys = append(keys, "name", "addresses", "tags", "authorized", "clientVersion", "created", "expires", "keyExpiryDisabled", "connectedToControl", "isExternal", "isEphemeral", "multipleConnections", "blocksIncomingConnections", "tailnetLockError", "postureIdentity", "sshEnabled", "updateAvailable", "distro")
 	}
-	return pick(value, keys...)
+	return compactDevice(value, keys...)
 }
 func compactDeviceGet(value map[string]any, details bool) map[string]any {
-	keys := []string{"id", "hostname", "name", "user", "os", "lastSeen", "authorized", "tags"}
+	keys := []string{"id", "hostname", "name", "os", "lastSeen", "authorized", "tags"}
 	if details {
-		keys = append(keys, "addresses", "clientVersion", "expires", "keyExpiryDisabled", "nodeId")
+		keys = append(keys, "addresses", "clientVersion", "created", "expires", "keyExpiryDisabled", "nodeId", "advertisedRoutes", "enabledRoutes", "connectedToControl", "isExternal", "isEphemeral", "multipleConnections", "blocksIncomingConnections", "tailnetLockError", "postureIdentity", "sshEnabled", "updateAvailable", "distro")
 	}
-	return pick(value, keys...)
+	return compactDevice(value, keys...)
+}
+func compactDevice(value map[string]any, keys ...string) map[string]any {
+	result := pick(value, keys...)
+	// Tailscale's user field is the registering user; for a tagged device it is
+	// not the device's current identity.
+	if user, ok := value["user"]; ok {
+		result["registered_by"] = user
+	}
+	return result
 }
 func compactUser(value map[string]any) map[string]any {
 	return pick(value, "id", "loginName", "displayName", "profilePicUrl", "type", "role", "status", "created")
@@ -986,7 +1013,7 @@ func (o authKeyOptions) Request() map[string]any {
 }
 func setACLOptions(args []string) (aclFile, backupFile string, err error) {
 	if len(args) != 3 {
-		return "", "", fmt.Errorf("administer tailscale acl set requires exactly one ACL_FILE and --backup BACKUP_FILE; the backup path must be new")
+		return "", "", fmt.Errorf("administer tailscale acl set requires exactly one ACL_FILE and --backup BACKUP_FILE; the backup path must be new (for example, --backup acl-before-YYYYMMDDTHHMMSSZ.hujson)")
 	}
 	if args[0] == "--backup" && args[1] != "" && args[2] != "" {
 		return args[2], args[1], nil
@@ -994,7 +1021,7 @@ func setACLOptions(args []string) (aclFile, backupFile string, err error) {
 	if args[0] != "" && args[1] == "--backup" && args[2] != "" {
 		return args[0], args[2], nil
 	}
-	return "", "", fmt.Errorf("administer tailscale acl set requires exactly one ACL_FILE and --backup BACKUP_FILE; the backup path must be new")
+	return "", "", fmt.Errorf("administer tailscale acl set requires exactly one ACL_FILE and --backup BACKUP_FILE; the backup path must be new (for example, --backup acl-before-YYYYMMDDTHHMMSSZ.hujson)")
 }
 func (c *Client) validateACL(acl []byte) (any, error) {
 	data, _, err := c.request(http.MethodPost, c.tailnetPath("/acl/validate"), "application/hujson", bytes.NewReader(acl))

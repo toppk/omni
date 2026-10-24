@@ -46,15 +46,39 @@ func TestDeviceListUsesScopedEndpointAndCompactOutput(t *testing.T) {
 }
 
 func TestDeviceListDetailsAddsSelectionContext(t *testing.T) {
-	c := testClient(t, func(*http.Request) (*http.Response, error) {
-		return response(`{"devices":[{"id":"dev1","hostname":"host","os":"linux","lastSeen":"now","addresses":["100.64.0.1"],"clientVersion":"1.2.3","unwanted":"large"}]}`, nil), nil
+	c := testClient(t, func(r *http.Request) (*http.Response, error) {
+		if r.URL.Query().Get("fields") != "all" {
+			t.Fatalf("details query = %q", r.URL.RawQuery)
+		}
+		return response(`{"devices":[{"id":"dev1","hostname":"host","os":"linux","lastSeen":"now","user":"enroller@example.com","addresses":["100.64.0.1"],"clientVersion":"1.2.3","postureIdentity":{"disabled":true},"unwanted":"large"}]}`, nil), nil
 	})
 	var out bytes.Buffer
 	if err := c.execute(definition(t, "observe", "tailscale", "device", "list"), []string{"--details"}, &out); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "addresses") || !strings.Contains(out.String(), "clientVersion") || strings.Contains(out.String(), "unwanted") {
+	if !strings.Contains(out.String(), "addresses") || !strings.Contains(out.String(), "clientVersion") || !strings.Contains(out.String(), "registered_by") || !strings.Contains(out.String(), "postureIdentity") || strings.Contains(out.String(), "unwanted") {
 		t.Fatalf("details output: %s", out.String())
+	}
+}
+
+func TestDeviceGetDetailsLabelsRegistrationAndReturnsOperationalEvidence(t *testing.T) {
+	c := testClient(t, func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path != "/device/dev1" || r.URL.Query().Get("fields") != "all" {
+			t.Fatalf("request = %s", r.URL.String())
+		}
+		return response(`{"id":"dev1","hostname":"host","user":"enroller@example.com","tags":["tag:server"],"advertisedRoutes":["10.0.0.0/24"],"enabledRoutes":["10.0.0.0/24"],"connectedToControl":false,"postureIdentity":{"disabled":true},"unwanted":"large"}`, nil), nil
+	})
+	var out bytes.Buffer
+	if err := c.execute(definition(t, "observe", "tailscale", "device", "get"), []string{"dev1", "--details"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"registered_by", "advertisedRoutes", "enabledRoutes", "connectedToControl", "postureIdentity"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("details output %s does not contain %s", out.String(), want)
+		}
+	}
+	if strings.Contains(out.String(), "unwanted") || strings.Contains(out.String(), `"user"`) {
+		t.Fatalf("details output retained an ambiguous or unrequested field: %s", out.String())
 	}
 }
 
@@ -187,7 +211,7 @@ func TestCredentialGetReportsOAuthIdentityScopesAndCacheExpiry(t *testing.T) {
 			return response(`{"access_token":"issued-token","expires_in":3600}`, nil), nil
 		}
 		if r.URL.Path == "/tailnet/-/keys/k-client" {
-			return response(`{"id":"k-client","keyType":"client","scopes":["devices:core:read","devices:routes:read"],"tags":["tag:ops"]}`, nil), nil
+			return response(`{"id":"k-client","keyType":"client","updated":"2999-01-01T00:00:00Z","scopes":["devices:core:read","devices:routes:read"],"tags":["tag:ops"]}`, nil), nil
 		}
 		t.Fatalf("unexpected request %s", r.URL.Path)
 		return nil, nil
@@ -196,7 +220,7 @@ func TestCredentialGetReportsOAuthIdentityScopesAndCacheExpiry(t *testing.T) {
 	if err := c.execute(definition(t, "observe", "tailscale", "credential", "get"), nil, &out); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"auth_method":"oauth_client"`, `"client_id":"k-client"`, `"scope_status":"available"`, `"devices:routes:read"`, `"expires_at":`} {
+	for _, want := range []string{`"auth_method":"oauth_client"`, `"client_id":"k-client"`, `"scope_status":"available"`, `"devices:routes:read"`, `"expires_at":`, `"issued_at":`, `"minted_before_client_updated":true`} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("credential output %s does not contain %s", out.String(), want)
 		}
@@ -287,7 +311,7 @@ func TestTagAssignmentErrorExplainsOAuthTagOwnership(t *testing.T) {
 	})}
 	var out bytes.Buffer
 	err := c.execute(definition(t, "authorize", "tailscale", "device", "tag", "set"), []string{"dev1", "tag:guest"}, &out)
-	if err == nil || !strings.Contains(err.Error(), "exactly match") || !strings.Contains(err.Error(), "tagOwners") || !strings.Contains(err.Error(), "tag:guest") {
+	if err == nil || !strings.Contains(err.Error(), "possible authorization constraints") || !strings.Contains(err.Error(), "tagOwners") || !strings.Contains(err.Error(), "tag:guest") {
 		t.Fatalf("error = %v", err)
 	}
 }
