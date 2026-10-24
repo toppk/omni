@@ -203,7 +203,7 @@ Run the normal local loop before a commit:
 gofmt -w cmd internal
 go test ./...
 go vet ./...
-go build -o ./bin/omni ./cmd/omni
+just build
 ./bin/omni describe SERVICE
 ```
 

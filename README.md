@@ -40,7 +40,7 @@ go run ./cmd/omni configure init
 go run ./cmd/omni describe --format=json
 ```
 
-Check the installed release version with `omni version`, `omni --version`, or `omni -V`. Local builds report `dev`; release builds receive their version from the Git tag during compilation. Run `omni changelog` to print the GitHub page for the latest release notes, which agents can inspect before relying on new capabilities.
+Check the installed release version with `omni version`, `omni --version`, or `omni -V`. Build a local CLI with `just build`; it writes `bin/omni` and embeds the current Git revision as `dev-SHORT_SHA`, adding `+` when the worktree has uncommitted changes. Release builds receive their version from the Git tag during compilation. Run `omni changelog` to print the GitHub page for the latest release notes, which agents can inspect before relying on new capabilities.
 
 `configure init` creates Omni's user-managed configuration files:
 
