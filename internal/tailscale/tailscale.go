@@ -274,10 +274,25 @@ func (c *Client) executeWithFormat(d command.Definition, args []string, format o
 		if len(args) < 2 {
 			return fmt.Errorf("%s requires DEVICE_ID and at least one TAG", d.Name())
 		}
+		before, err := c.deviceTags(args[0])
+		if err != nil {
+			return err
+		}
+		if sameStrings(before, args[1:]) {
+			result = map[string]any{"device_id": args[0], "before_tags": before, "after_tags": before, "changed": false}
+			break
+		}
+		if err := c.preflightTagAssignment(args[1:]); err != nil {
+			return err
+		}
 		if _, _, err := c.json(http.MethodPost, "/device/"+url.PathEscape(args[0])+"/tags", map[string][]string{"tags": args[1:]}); err != nil {
 			return c.tagAssignmentError(err, args[1:])
 		}
-		result = map[string]any{"device_id": args[0], "tags": args[1:]}
+		after, err := c.deviceTags(args[0])
+		if err != nil {
+			return fmt.Errorf("read device tags after replacement: %w", err)
+		}
+		result = map[string]any{"device_id": args[0], "before_tags": before, "after_tags": after, "changed": !sameStrings(before, after)}
 	case "authorize tailscale device authorization set":
 		deviceID, state, err := deviceStateOption(args, "--state", "authorized", "unauthorized", d.Name())
 		if err != nil {
@@ -378,7 +393,13 @@ func (c *Client) executeWithFormat(d command.Definition, args []string, format o
 		if err := json.Unmarshal(data, &preview); err != nil {
 			return decode(err)
 		}
-		result = map[string]any{"source": source, "preview": preview}
+		if previewObject, ok := preview.(map[string]any); ok {
+			if requestType, ok := previewObject["type"]; ok {
+				previewObject["api_request_type"] = requestType
+				delete(previewObject, "type")
+			}
+		}
+		result = map[string]any{"source": source, "api_request_type": "user", "preview": preview}
 		if file != "" {
 			result.(map[string]any)["acl_file"] = file
 		}
@@ -415,7 +436,11 @@ func (c *Client) executeWithFormat(d command.Definition, args []string, format o
 		if _, _, err := c.requestWithHeaders(http.MethodPost, c.tailnetPath("/acl"), "application/hujson", bytes.NewReader(data), http.Header{"If-Match": {etag}}); err != nil {
 			return err
 		}
-		result = map[string]string{"acl_file": aclFile, "backup_file": backupFile, "etag": etag, "status": "accepted"}
+		stored, storedHeader, err := c.request(http.MethodGet, c.tailnetPath("/acl"), "", nil)
+		if err != nil {
+			return fmt.Errorf("read stored ACL after replacement: %w", err)
+		}
+		result = map[string]any{"acl_file": aclFile, "backup_file": backupFile, "previous_etag": etag, "new_etag": storedHeader.Get("Etag"), "stored_differs_from_submitted": !bytes.Equal(data, stored), "status": "accepted"}
 	case "observe tailscale tag list":
 		if err := exact(args, 0, d.Name()); err != nil {
 			return err
@@ -599,8 +624,8 @@ func (c *Client) json(method, endpoint string, value any) ([]byte, http.Header, 
 
 func (c *Client) credentialReport() map[string]any {
 	report := map[string]any{
-		"api_url": c.baseURL,
-		"tailnet": c.tailnet,
+		"api_url":          c.baseURL,
+		"tailnet_selector": c.tailnet,
 	}
 	if c.creds.APIKey != "" {
 		report["auth_method"] = "api_access_token"
@@ -702,6 +727,77 @@ func (c *Client) tagAssignmentError(err error, tags []string) error {
 		return err
 	}
 	return fmt.Errorf("%w; Tailscale documents OAuth tag-set matching and tagOwners as possible authorization constraints for requested tags [%s], but this response does not identify the failing condition. Inspect the credential with 'omni observe tailscale credential get', policy ownership with 'omni observe tailscale tag list', and device evidence with 'omni observe tailscale device get --details'", err, strings.Join(tags, ", "))
+}
+
+func (c *Client) deviceTags(deviceID string) ([]string, error) {
+	data, _, err := c.request(http.MethodGet, "/device/"+url.PathEscape(deviceID), "", nil)
+	if err != nil {
+		return nil, err
+	}
+	var device map[string]any
+	if err := json.Unmarshal(data, &device); err != nil {
+		return nil, decode(err)
+	}
+	return stringValues(device["tags"]), nil
+}
+
+func (c *Client) preflightTagAssignment(requested []string) error {
+	if c.creds.APIKey != "" {
+		return nil
+	}
+	if c.cachePath == "" {
+		return nil
+	}
+	metadata, err := config.LoadEphemeralTailscaleTokenMetadata(c.cachePath, time.Now())
+	if err != nil || len(metadata.Tags) == 0 || sameStrings(metadata.Tags, requested) {
+		return nil
+	}
+	data, _, err := c.requestWithHeaders(http.MethodGet, c.tailnetPath("/acl"), "", nil, http.Header{"Accept": {"application/json"}})
+	if err != nil {
+		return fmt.Errorf("read tag ownership for OAuth tag-assignment preflight: %w", err)
+	}
+	var policy struct {
+		TagOwners map[string][]string `json:"tagOwners"`
+	}
+	if err := json.Unmarshal(data, &policy); err != nil {
+		return decode(err)
+	}
+	for _, tag := range requested {
+		if !hasAny(policy.TagOwners[tag], metadata.Tags) {
+			return fmt.Errorf("OAuth tag-assignment preflight: %s is not owned by any effective credential tag [%s]; request either the credential's complete tag set or add direct tagOwners delegation before retrying", tag, strings.Join(metadata.Tags, ", "))
+		}
+	}
+	return nil
+}
+
+func hasAny(values, candidates []string) bool {
+	for _, value := range values {
+		for _, candidate := range candidates {
+			if value == candidate {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func sameStrings(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	seen := make(map[string]int, len(left))
+	for _, value := range left {
+		seen[value]++
+	}
+	for _, value := range right {
+		seen[value]--
+	}
+	for _, count := range seen {
+		if count != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *Client) redactCredentialError(message string) string {
@@ -834,12 +930,12 @@ func compactDevice(value map[string]any, keys ...string) map[string]any {
 	// Tailscale's user field is the registering user; for a tagged device it is
 	// not the device's current identity.
 	if user, ok := value["user"]; ok {
-		result["registered_by"] = user
+		result["registeredBy"] = user
 	}
 	return result
 }
 func compactUser(value map[string]any) map[string]any {
-	return pick(value, "id", "loginName", "displayName", "profilePicUrl", "type", "role", "status", "created")
+	return pick(value, "id", "loginName", "displayName", "type", "role", "status", "created")
 }
 func compactKey(value map[string]any) map[string]any {
 	result := pick(value, "id", "keyType", "created", "updated", "expires", "revoked", "invalid", "scopes", "tags", "description")

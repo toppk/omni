@@ -56,7 +56,7 @@ func TestDeviceListDetailsAddsSelectionContext(t *testing.T) {
 	if err := c.execute(definition(t, "observe", "tailscale", "device", "list"), []string{"--details"}, &out); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "addresses") || !strings.Contains(out.String(), "clientVersion") || !strings.Contains(out.String(), "registered_by") || !strings.Contains(out.String(), "postureIdentity") || strings.Contains(out.String(), "unwanted") {
+	if !strings.Contains(out.String(), "addresses") || !strings.Contains(out.String(), "clientVersion") || !strings.Contains(out.String(), "registeredBy") || !strings.Contains(out.String(), "postureIdentity") || strings.Contains(out.String(), "unwanted") {
 		t.Fatalf("details output: %s", out.String())
 	}
 }
@@ -72,7 +72,7 @@ func TestDeviceGetDetailsLabelsRegistrationAndReturnsOperationalEvidence(t *test
 	if err := c.execute(definition(t, "observe", "tailscale", "device", "get"), []string{"dev1", "--details"}, &out); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"registered_by", "advertisedRoutes", "enabledRoutes", "connectedToControl", "postureIdentity"} {
+	for _, want := range []string{"registeredBy", "advertisedRoutes", "enabledRoutes", "connectedToControl", "postureIdentity"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("details output %s does not contain %s", out.String(), want)
 		}
@@ -115,7 +115,15 @@ func TestDeviceListFiltersByTagWithoutChangingAPIRequest(t *testing.T) {
 }
 
 func TestSetTagsIsAuthorizeCommandAndReplacesTagList(t *testing.T) {
+	gets := 0
 	c := testClient(t, func(r *http.Request) (*http.Response, error) {
+		if r.Method == http.MethodGet && r.URL.Path == "/device/dev1" {
+			gets++
+			if gets == 1 {
+				return response(`{"tags":["tag:old"]}`, nil), nil
+			}
+			return response(`{"tags":["tag:prod","tag:database"]}`, nil), nil
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/device/dev1/tags" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
@@ -130,8 +138,35 @@ func TestSetTagsIsAuthorizeCommandAndReplacesTagList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), `"tag:prod"`) {
+	if !strings.Contains(out.String(), `"before_tags":["tag:old"]`) || !strings.Contains(out.String(), `"after_tags":["tag:prod","tag:database"]`) || !strings.Contains(out.String(), `"changed":true`) {
 		t.Fatalf("output = %s", out.String())
+	}
+}
+
+func TestSetTagsPreflightExplainsMissingOAuthTagDelegation(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "ephemeral", "credentials.toml")
+	if err := config.StoreEphemeralTailscaleTokenWithMetadata(cachePath, "cached-token", time.Now().Add(time.Hour), "devices:core", "tag:server tag:guest"); err != nil {
+		t.Fatal(err)
+	}
+	calledPost := false
+	c := NewClientWithCache(config.TailscaleCredentials{ClientSecret: "secret"}, config.TailscaleSettings{APIURL: "https://example.test", Tailnet: "-", ClientID: "k-client"}, cachePath)
+	c.http = &http.Client{Transport: roundTripper(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Path {
+		case "/device/dev1":
+			return response(`{"tags":[]}`, nil), nil
+		case "/tailnet/-/acl":
+			return response(`{"tagOwners":{"tag:guest":["admin@example.com"]}}`, nil), nil
+		case "/device/dev1/tags":
+			calledPost = true
+			return response(`{}`, nil), nil
+		default:
+			t.Fatalf("request = %s", r.URL.Path)
+			return nil, nil
+		}
+	})}
+	err := c.execute(definition(t, "authorize", "tailscale", "device", "tag", "set"), []string{"dev1", "tag:guest"}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "tag:guest is not owned by any effective credential tag [tag:server, tag:guest]") || calledPost {
+		t.Fatalf("err=%v calledPost=%t", err, calledPost)
 	}
 }
 
@@ -322,6 +357,12 @@ func TestTagAssignmentErrorExplainsOAuthTagOwnership(t *testing.T) {
 	c.http = &http.Client{Transport: roundTripper(func(r *http.Request) (*http.Response, error) {
 		if r.URL.Path == "/oauth/token" {
 			return response(`{"access_token":"issued-token","expires_in":3600}`, nil), nil
+		}
+		if r.URL.Path == "/device/dev1" {
+			return response(`{"tags":[]}`, nil), nil
+		}
+		if r.URL.Path == "/device/dev1/tags" {
+			return responseStatus(http.StatusBadRequest, "400 Bad Request", `{"message":"requested tags [tag:guest] are invalid or not permitted"}`), nil
 		}
 		return responseStatus(http.StatusBadRequest, "400 Bad Request", `{"message":"requested tags [tag:guest] are invalid or not permitted"}`), nil
 	})}
@@ -568,6 +609,11 @@ func TestACLSetValidatesBacksUpAndUsesETag(t *testing.T) {
 				t.Fatalf("set = %s %s If-Match=%q", r.Method, r.URL.Path, r.Header.Get("If-Match"))
 			}
 			return response(`{}`, nil), nil
+		case 4:
+			if r.Method != http.MethodGet || r.URL.Path != "/tailnet/-/acl" {
+				t.Fatalf("stored = %s %s", r.Method, r.URL.Path)
+			}
+			return response(`{"acls":[]}`, http.Header{"Etag": []string{`"new"`}}), nil
 		default:
 			t.Fatalf("unexpected request %d", calls)
 			return nil, nil
@@ -585,7 +631,7 @@ func TestACLSetValidatesBacksUpAndUsesETag(t *testing.T) {
 	if err != nil || info.Mode().Perm() != 0600 {
 		t.Fatalf("backup mode=%v err=%v", info.Mode(), err)
 	}
-	if !strings.Contains(out.String(), "backup_file") || !strings.Contains(out.String(), "current") {
+	if !strings.Contains(out.String(), "backup_file") || !strings.Contains(out.String(), "previous_etag") || !strings.Contains(out.String(), "new_etag") || !strings.Contains(out.String(), `"stored_differs_from_submitted":false`) {
 		t.Fatalf("set output = %s", out.String())
 	}
 }

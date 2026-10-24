@@ -117,7 +117,7 @@ Device lists default to only `id`, `hostname`, `os`, and `lastSeen`. Add
 `--details` to include addresses, client version, tags, registration
 provenance, connection and posture fields, and related selection context
 without issuing a separate `get` request for every device. Omni reports the
-Tailscale API's `user` field as `registered_by`: tagged devices identify as
+Tailscale API's `user` field as `registeredBy`: tagged devices identify as
 their tags, so this is the enrolling user, not their current tailnet identity.
 For `device get --details`, Omni requests Tailscale's full device record and
 returns a curated non-secret subset, including advertised and enabled routes,
@@ -283,6 +283,11 @@ permitted` response does not identify which authorization or device-specific
 condition failed. A credential's tags, current `tagOwners`, and
 `device get --details` may all be relevant; preserve the device IDs and the
 raw Tailscale error when escalating an unexplained per-device difference.
+Before issuing an OAuth-backed tag replacement, Omni reads the device's current
+tags and the live `tagOwners` map. It returns a no-op result with `changed:
+false` when the requested set is already present; otherwise it refuses a
+documented delegation mismatch with a specific missing ownership explanation.
+Successful replacements report `before_tags`, `after_tags`, and `changed`.
 Where the documented ownership rule is the intended policy, define direct
 ownership such as:
 
