@@ -82,6 +82,22 @@ func TestDeviceGetDetailsLabelsRegistrationAndReturnsOperationalEvidence(t *test
 	}
 }
 
+func TestDevicePostureGetUsesDedicatedReadEndpoint(t *testing.T) {
+	c := testClient(t, func(r *http.Request) (*http.Response, error) {
+		if r.Method != http.MethodGet || r.URL.Path != "/device/dev1/attributes" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		return response(`{"custom:managed":"true","node:osVersion":"Windows Server"}`, nil), nil
+	})
+	var out bytes.Buffer
+	if err := c.execute(definition(t, "observe", "tailscale", "device", "posture", "get"), []string{"dev1"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), `"device_id":"dev1"`) || !strings.Contains(out.String(), `"custom:managed":"true"`) {
+		t.Fatalf("posture output = %s", out.String())
+	}
+}
+
 func TestDeviceListFiltersByTagWithoutChangingAPIRequest(t *testing.T) {
 	c := testClient(t, func(r *http.Request) (*http.Response, error) {
 		if r.Method != http.MethodGet || r.URL.Path != "/tailnet/-/devices" {
@@ -208,7 +224,7 @@ func TestCredentialGetReportsOAuthIdentityScopesAndCacheExpiry(t *testing.T) {
 	c := NewClientWithCache(config.TailscaleCredentials{ClientSecret: "secret-value"}, config.TailscaleSettings{APIURL: "https://example.test", Tailnet: "-", ClientID: "k-client"}, cachePath)
 	c.http = &http.Client{Transport: roundTripper(func(r *http.Request) (*http.Response, error) {
 		if r.URL.Path == "/oauth/token" {
-			return response(`{"access_token":"issued-token","expires_in":3600}`, nil), nil
+			return response(`{"access_token":"issued-token","expires_in":3600,"scope":"devices:core devices:routes:read","tags":"tag:server tag:guest"}`, nil), nil
 		}
 		if r.URL.Path == "/tailnet/-/keys/k-client" {
 			return response(`{"id":"k-client","keyType":"client","updated":"2999-01-01T00:00:00Z","scopes":["devices:core:read","devices:routes:read"],"tags":["tag:ops"]}`, nil), nil
@@ -220,7 +236,7 @@ func TestCredentialGetReportsOAuthIdentityScopesAndCacheExpiry(t *testing.T) {
 	if err := c.execute(definition(t, "observe", "tailscale", "credential", "get"), nil, &out); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"auth_method":"oauth_client"`, `"client_id":"k-client"`, `"scope_status":"available"`, `"devices:routes:read"`, `"expires_at":`, `"issued_at":`, `"minted_before_client_updated":true`} {
+	for _, want := range []string{`"auth_method":"oauth_client"`, `"client_id":"k-client"`, `"scope_status":"available"`, `"devices:routes:read"`, `"expires_at":`, `"issued_at":`, `"minted_before_client_updated":true`, `"scopes":["devices:core","devices:routes:read"]`, `"tags":["tag:server","tag:guest"]`} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("credential output %s does not contain %s", out.String(), want)
 		}

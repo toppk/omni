@@ -52,6 +52,7 @@ shown in your Trust credentials UI.
 | --- | --- | --- |
 | devices: list and get | `devices:core:read` | `devices:core` for name, tag, authorization, expiry, or removal changes |
 | device routes | `devices:routes:read` | none in Omni's current surface |
+| device posture attributes | `devices:posture_attributes:read` | none in Omni's current surface |
 | users | `users:read` | none in Omni's current surface |
 | ACL get, validate, preview, tag list | `acl:read` or `policy_file:read` | `acl` or `policy_file` for `administer tailscale acl set` |
 | DNS snapshot | `dns:read` | none in Omni's current surface |
@@ -68,9 +69,7 @@ device tag. Without `devices:routes:read`, the preflight emits its partial
 device evidence, identifies the missing route scope, and exits nonzero rather
 than suggesting that deletion is ready.
 
-Tailscale also requires `devices:core:read` and
-`devices:posture_attributes:read` alongside the ACL read scope. The
-`observe tailscale key list` command is intentionally non-secret: with
+The `observe tailscale key list` command is intentionally non-secret: with
 `auth_keys:read`, it returns auth-key metadata visible to that credential; with
 `api_access_tokens:read`, it returns visible API-token metadata; and with
 `oauth_keys:read`, it returns OAuth-client and OAuth-token metadata. It does
@@ -96,6 +95,12 @@ auditable without exposing a token. If that metadata is unavailable, the
 structured `scope_error` includes the missing-scope guidance without exposing
 the client secret or access token.
 
+For OAuth tokens minted by Omni, the report also retains the non-secret
+`token_cache.scopes` and `token_cache.tags` supplied by Tailscale's token
+response. These are the effective token claims, which can differ from a
+client's current metadata and are the relevant evidence for a tag-assignment
+failure.
+
 After changing an OAuth client's scopes or tags, explicitly mint a replacement
 token instead of waiting for Omni's cached token to expire:
 
@@ -118,7 +123,9 @@ For `device get --details`, Omni requests Tailscale's full device record and
 returns a curated non-secret subset, including advertised and enabled routes,
 control connection state, posture identity, ephemeral/external state, and
 tailnet-lock errors. It does not retrieve custom posture attributes; those use
-Tailscale's separate `devices:posture_attributes:read` API scope.
+Tailscale's separate `devices:posture_attributes:read` API scope. Grant that
+read scope and run `omni observe tailscale device posture get DEVICE_ID` to
+inspect them without changing the device.
 
 ## Setup
 

@@ -132,6 +132,8 @@ func (c *Client) token() (string, error) {
 	var result struct {
 		AccessToken string `json:"access_token"`
 		ExpiresIn   int    `json:"expires_in"`
+		Scope       string `json:"scope"`
+		Tags        string `json:"tags"`
 	}
 	if err := json.Unmarshal(data, &result); err != nil || result.AccessToken == "" {
 		return "", fmt.Errorf("decode Tailscale OAuth token response")
@@ -142,7 +144,7 @@ func (c *Client) token() (string, error) {
 		if expiresIn <= 0 {
 			expiresIn = 3600
 		}
-		if err := config.StoreEphemeralTailscaleToken(c.cachePath, c.accessToken, time.Now().Add(time.Duration(expiresIn)*time.Second)); err != nil {
+		if err := config.StoreEphemeralTailscaleTokenWithMetadata(c.cachePath, c.accessToken, time.Now().Add(time.Duration(expiresIn)*time.Second), result.Scope, result.Tags); err != nil {
 			return "", fmt.Errorf("cache generated Tailscale token: %w", err)
 		}
 	}
@@ -232,6 +234,19 @@ func (c *Client) executeWithFormat(d command.Definition, args []string, format o
 			return decode(err)
 		}
 		result = map[string]any{"routes": routes}
+	case "observe tailscale device posture get":
+		if err := exact(args, 1, d.Name()); err != nil {
+			return err
+		}
+		data, _, err := c.request(http.MethodGet, "/device/"+url.PathEscape(args[0])+"/attributes", "", nil)
+		if err != nil {
+			return err
+		}
+		var attributes map[string]any
+		if err := json.Unmarshal(data, &attributes); err != nil {
+			return decode(err)
+		}
+		result = map[string]any{"device_id": args[0], "attributes": attributes}
 	case "observe tailscale device retirement preflight":
 		if err := exact(args, 1, d.Name()); err != nil {
 			return err
@@ -635,6 +650,12 @@ func (c *Client) credentialReport() map[string]any {
 			}
 			if !metadata.IssuedAt.IsZero() && !clientUpdatedAt.IsZero() {
 				cache["minted_before_client_updated"] = metadata.IssuedAt.Before(clientUpdatedAt)
+			}
+			if len(metadata.Scopes) > 0 {
+				cache["scopes"] = metadata.Scopes
+			}
+			if len(metadata.Tags) > 0 {
+				cache["tags"] = metadata.Tags
 			}
 			report["token_cache"] = cache
 		}
@@ -1066,6 +1087,8 @@ func requiredScope(method, endpoint string) string {
 		return "dns:read"
 	case strings.HasSuffix(path, "/routes"):
 		return "devices:routes:read"
+	case strings.HasSuffix(path, "/attributes"):
+		return "devices:posture_attributes:read"
 	case strings.Contains(path, "/keys"):
 		if method == http.MethodGet {
 			return "oauth_keys:read (OAuth clients), auth_keys:read (auth keys), and/or api_access_tokens:read (API access tokens)"

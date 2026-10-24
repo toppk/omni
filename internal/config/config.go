@@ -108,6 +108,8 @@ type TailscaleTokenMetadata struct {
 	Valid     bool
 	IssuedAt  time.Time
 	ExpiresAt time.Time
+	Scopes    []string
+	Tags      []string
 }
 
 // LoadEphemeralTailscaleTokenMetadata reports cache state without reading or
@@ -132,6 +134,20 @@ func LoadEphemeralTailscaleTokenMetadata(path string, now time.Time) (TailscaleT
 		if err != nil {
 			return TailscaleTokenMetadata{}, fmt.Errorf("parse cached Tailscale token issue time: %w", err)
 		}
+	}
+	for _, item := range []struct {
+		key   string
+		dest  *[]string
+		label string
+	}{
+		{"tailscale.generated-api-key-scopes", &metadata.Scopes, "scopes"},
+		{"tailscale.generated-api-key-tags", &metadata.Tags, "tags"},
+	} {
+		value, err := Get(path, item.key)
+		if err != nil {
+			return TailscaleTokenMetadata{}, err
+		}
+		*item.dest = strings.Fields(value)
 	}
 	if expires == "" {
 		return metadata, nil
@@ -159,10 +175,24 @@ func ClearEphemeralTailscaleToken(path string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("clear cached Tailscale token issue time: %w", err)
 	}
-	return deletedToken || deletedExpiry || deletedIssuedAt, nil
+	deletedScopes, err := Delete(path, "tailscale.generated-api-key-scopes")
+	if err != nil {
+		return false, fmt.Errorf("clear cached Tailscale token scopes: %w", err)
+	}
+	deletedTags, err := Delete(path, "tailscale.generated-api-key-tags")
+	if err != nil {
+		return false, fmt.Errorf("clear cached Tailscale token tags: %w", err)
+	}
+	return deletedToken || deletedExpiry || deletedIssuedAt || deletedScopes || deletedTags, nil
 }
 
 func StoreEphemeralTailscaleToken(path, token string, expiresAt time.Time) error {
+	return StoreEphemeralTailscaleTokenWithMetadata(path, token, expiresAt, "", "")
+}
+
+// StoreEphemeralTailscaleTokenWithMetadata stores a cached OAuth token and
+// non-secret scope and tag evidence returned when it was minted.
+func StoreEphemeralTailscaleTokenWithMetadata(path, token string, expiresAt time.Time, scopes, tags string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
@@ -183,6 +213,12 @@ func StoreEphemeralTailscaleToken(path, token string, expiresAt time.Time) error
 		return err
 	}
 	if err := Set(path, "tailscale.generated-api-key-issued-at", time.Now().UTC().Format(time.RFC3339)); err != nil {
+		return err
+	}
+	if err := Set(path, "tailscale.generated-api-key-scopes", scopes); err != nil {
+		return err
+	}
+	if err := Set(path, "tailscale.generated-api-key-tags", tags); err != nil {
 		return err
 	}
 	return os.Chmod(path, 0600)

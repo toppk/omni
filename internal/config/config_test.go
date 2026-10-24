@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -52,6 +53,24 @@ func TestLoadEphemeralTailscaleTokenMetadataOmitsSecret(t *testing.T) {
 	}
 	if !metadata.Cached || !metadata.Valid || metadata.IssuedAt.IsZero() || !metadata.ExpiresAt.Equal(expiresAt) {
 		t.Fatalf("metadata = %#v", metadata)
+	}
+}
+
+func TestLoadEphemeralTailscaleTokenMetadataReportsNonSecretClaims(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ephemeral", "credentials.toml")
+	now := time.Now()
+	if err := StoreEphemeralTailscaleTokenWithMetadata(path, "must-not-return", now.Add(time.Hour), "devices:core devices:routes:read", "tag:server tag:guest"); err != nil {
+		t.Fatal(err)
+	}
+	metadata, err := LoadEphemeralTailscaleTokenMetadata(path, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(metadata.Scopes, " "), "devices:core devices:routes:read"; got != want {
+		t.Fatalf("scopes = %q, want %q", got, want)
+	}
+	if got, want := strings.Join(metadata.Tags, " "), "tag:server tag:guest"; got != want {
+		t.Fatalf("tags = %q, want %q", got, want)
 	}
 }
 
